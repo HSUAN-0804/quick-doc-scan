@@ -10,7 +10,7 @@
   --accent-2: #52a7ff;
   --danger: #ff6b5f;
   --shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
-  --library-height: 36dvh;
+  --library-height: calc(env(safe-area-inset-bottom) + 176px);
 }
 
 * {
@@ -236,7 +236,7 @@ h2 {
   right: 0;
   bottom: 0;
   height: var(--library-height);
-  min-height: 18dvh;
+  min-height: 44px;
   max-height: 96dvh;
   overflow: auto;
   padding: 0 16px calc(env(safe-area-inset-bottom) + 142px);
@@ -246,6 +246,16 @@ h2 {
   box-shadow: 0 -18px 46px rgba(0, 0, 0, 0.36);
   overscroll-behavior: contain;
   touch-action: pan-y;
+}
+
+body.library-collapsed .library-pane {
+  overflow: hidden;
+}
+
+body.library-collapsed .library-head,
+body.library-collapsed .actions,
+body.library-collapsed .strip {
+  display: none;
 }
 
 .resize-grip {

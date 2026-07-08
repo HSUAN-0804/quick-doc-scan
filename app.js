@@ -566,6 +566,10 @@ function selectedScans() {
   return scans.filter((scan) => ids.has(scan.id) && scan.blob && (scan.status || "done") === "done");
 }
 
+function completedScans() {
+  return scans.filter((scan) => scan.blob && (scan.status || "done") === "done");
+}
+
 function toggleSelectAll() {
   const checks = Array.from(els.strip.querySelectorAll("input[type='checkbox']:not(:disabled)"));
   const shouldCheck = checks.some((input) => !input.checked);
@@ -575,7 +579,7 @@ function toggleSelectAll() {
 }
 
 async function shareSelected() {
-  const selected = selectedScans();
+  const selected = completedScans();
   if (!selected.length) {
     alert("請先選擇已完成的照片。");
     return;
@@ -586,7 +590,7 @@ async function shareSelected() {
     await navigator.share({ files, title: "掃描文件", text: "掃描文件" });
   } else {
     alert("這個瀏覽器不支援多張直接分享，會改成下載。");
-    await downloadSelected();
+    await downloadScans(selected);
   }
 }
 
@@ -597,7 +601,11 @@ async function downloadSelected() {
     return;
   }
 
-  for (const [index, scan] of selected.entries()) {
+  await downloadScans(selected);
+}
+
+async function downloadScans(items) {
+  for (const [index, scan] of items.entries()) {
     const url = URL.createObjectURL(scan.blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -649,6 +657,7 @@ function stopPreviewResize() {
 function syncLibraryExpanded(height, viewportHeight) {
   const viewHeight = viewportHeight || window.innerHeight || document.documentElement.clientHeight;
   const currentHeight = height || els.libraryPane.getBoundingClientRect().height;
+  document.body.classList.toggle("library-collapsed", currentHeight <= Math.max(190, viewHeight * 0.26));
   document.body.classList.toggle("library-expanded", currentHeight >= viewHeight * 0.75);
 }
 
