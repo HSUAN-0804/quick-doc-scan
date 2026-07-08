@@ -340,12 +340,12 @@ body.library-expanded .bottom-controls {
 .scan-card img,
 .progress-card {
   width: 100%;
-  aspect-ratio: 3 / 4;
+  height: clamp(178px, 42vw, 320px);
   display: block;
 }
 
 .scan-card img {
-  object-fit: cover;
+  object-fit: contain;
   background:
     linear-gradient(45deg, #232b31 25%, transparent 25%),
     linear-gradient(-45deg, #232b31 25%, transparent 25%),
@@ -469,6 +469,11 @@ body.library-expanded .bottom-controls {
 @media (max-width: 390px) {
   .strip {
     grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  }
+
+  .scan-card img,
+  .progress-card {
+    height: clamp(164px, 45vw, 260px);
   }
 
   .capturebar {
