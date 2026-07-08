@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="快掃">
   <title>快掃</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=17">
+  <link rel="stylesheet" href="styles.css?v=18">
   <script async src="https://docs.opencv.org/4.x/opencv.js" onload="window.onOpenCvLoaded && window.onOpenCvLoaded()"></script>
 </head>
 <body>
@@ -18,7 +18,7 @@
       <video id="camera" playsinline autoplay muted></video>
       <div class="camera-empty" id="cameraEmpty">
         <strong>快掃</strong>
-        <span>開啟相機，連續拍文件或證件</span>
+        <span>按下快門會開啟 iPhone 原相機</span>
       </div>
       <canvas id="overlay"></canvas>
       <div class="topbar">
@@ -53,7 +53,7 @@
 
     <section class="bottom-controls" aria-label="拍攝控制">
       <div class="capturebar">
-        <button class="icon-button" id="openCamera" type="button" title="開啟相機" aria-label="開啟相機">相機</button>
+        <button class="icon-button" id="nativeCamera" type="button" title="使用 iPhone 原相機" aria-label="使用 iPhone 原相機">原相機</button>
         <button class="shutter" id="capture" type="button" aria-label="拍照"></button>
         <label class="icon-button file-button" title="匯入照片">
           匯入
@@ -65,6 +65,7 @@
 
   <canvas id="sourceCanvas" hidden></canvas>
   <canvas id="resultCanvas" hidden></canvas>
+  <input id="cameraPicker" class="hidden-picker" type="file" accept="image/*" capture="environment">
 
   <template id="scanTemplate">
     <article class="scan-card">
@@ -86,6 +87,6 @@
     </article>
   </template>
 
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>
