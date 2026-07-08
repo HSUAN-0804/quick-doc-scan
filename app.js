@@ -1,5 +1,9 @@
 const DB_NAME = "quick-scan-db";
 const STORE_NAME = "scans";
+const GEMINI_KEY = "quick-scan-gemini-key";
+const GEMINI_CONSENT = "quick-scan-gemini-consent";
+const GEMINI_MODEL = "gemini-3.5-flash";
+
 const els = {
   video: document.querySelector("#camera"),
   cameraEmpty: document.querySelector("#cameraEmpty"),
@@ -27,17 +31,15 @@ let cameraStream;
 let cvReady = false;
 let activeMode = "document";
 let scans = [];
-let dragState = null;
+let previewDrag = null;
+let queueRunning = false;
 
 window.onOpenCvLoaded = () => {
   if (window.cv && cv.Mat) {
     markCvReady();
     return;
   }
-
-  if (window.cv) {
-    cv.onRuntimeInitialized = markCvReady;
-  }
+  if (window.cv) cv.onRuntimeInitialized = markCvReady;
 };
 
 function markCvReady() {
@@ -49,8 +51,10 @@ async function init() {
   observeOpenCvLoad();
   db = await openDb();
   scans = await readAllScans();
+  resetInterruptedJobs();
   bindEvents();
   renderScans();
+  runQueue();
   registerServiceWorker();
 }
 
@@ -59,12 +63,10 @@ function observeOpenCvLoad() {
     markCvReady();
     return;
   }
-
   if (window.cv) {
     cv.onRuntimeInitialized = markCvReady;
     return;
   }
-
   setTimeout(() => {
     if (!cvReady) setStatus("OpenCV 載入中", "busy");
   }, 1800);
@@ -90,10 +92,7 @@ function bindEvents() {
 
 async function startCamera() {
   try {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach((track) => track.stop());
-    }
-
+    if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: "environment" },
@@ -102,7 +101,6 @@ async function startCamera() {
       },
       audio: false
     });
-
     els.video.srcObject = cameraStream;
     await els.video.play();
     els.cameraEmpty.classList.add("is-hidden");
@@ -113,17 +111,14 @@ async function startCamera() {
 }
 
 async function captureCurrentFrame() {
-  if (!els.video.videoWidth) {
-    await startCamera();
-  }
-
+  if (!els.video.videoWidth) await startCamera();
   if (!els.video.videoWidth) return;
 
   const canvas = els.sourceCanvas;
   canvas.width = els.video.videoWidth;
   canvas.height = els.video.videoHeight;
   canvas.getContext("2d").drawImage(els.video, 0, 0, canvas.width, canvas.height);
-  await processAndStore(canvas, "camera");
+  await createScanJob(canvas, "camera");
 }
 
 async function handlePickedFile(event) {
@@ -137,364 +132,188 @@ async function handlePickedFile(event) {
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);
   canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  await processAndStore(canvas, "photo");
+  await createScanJob(canvas, "photo");
   event.target.value = "";
 }
 
-async function processAndStore(sourceCanvas, source) {
-  setStatus("處理中...", "busy");
-
-  const result = activeMode === "original" || !cvReady
-    ? copyOriginal(sourceCanvas)
-    : scanWithOpenCv(sourceCanvas, activeMode);
-
-  const blob = await canvasToBlob(result.canvas, result.type);
+async function createScanJob(canvas, source) {
+  const mode = activeMode;
+  const originalBlob = await canvasToBlob(canvas, "image/jpeg", 0.92);
   const scan = {
     id: makeId(),
     createdAt: Date.now(),
-    name: `${modeLabel(activeMode)}-${new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`,
+    name: `${modeLabel(mode)}-${new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`,
     source,
-    mode: activeMode,
-    note: result.note,
-    blob
+    mode,
+    status: mode === "original" ? "done" : "queued",
+    progress: mode === "original" ? 100 : 0,
+    note: mode === "original" ? "已存原圖" : "等待 AI",
+    blob: mode === "original" ? originalBlob : null,
+    originalBlob: mode === "original" ? null : originalBlob
   };
 
   await saveScan(scan);
   scans.unshift(scan);
   renderScans();
-  flashOverlay(result.points, sourceCanvas);
-  setStatus(result.note || "已儲存", "ready");
+  setStatus(mode === "original" ? "已儲存" : "已加入背景處理", "ready");
+  runQueue();
 }
 
-function scanWithOpenCv(canvas, mode) {
-  const src = cv.imread(canvas);
-  const work = new cv.Mat();
-  const gray = new cv.Mat();
-  const equalized = new cv.Mat();
-  const blur = new cv.Mat();
-  let best = null;
+async function runQueue() {
+  if (queueRunning) return;
+  queueRunning = true;
 
   try {
-    const maxDetectSide = 1280;
-    const detectScale = Math.min(1, maxDetectSide / Math.max(src.cols, src.rows));
-    cv.resize(src, work, new cv.Size(0, 0), detectScale, detectScale, cv.INTER_AREA);
-    cv.cvtColor(work, gray, cv.COLOR_RGBA2GRAY);
-    cv.equalizeHist(gray, equalized);
-    cv.GaussianBlur(equalized, blur, new cv.Size(5, 5), 0);
-
-    const passes = [
-      makeCannyPass(blur, 30, 100, 7),
-      makeCannyPass(blur, 50, 160, 5),
-      makeCannyPass(blur, 80, 220, 3),
-      makeThresholdPass(equalized, 31, 7),
-      makeThresholdPass(gray, 51, 10)
-    ];
-
-    for (const pass of passes) {
-      const passBest = findBestDocumentCandidate(pass, work.cols * work.rows);
-      if (passBest && (!best || passBest.score > best.score)) {
-        best = passBest;
-      }
-      pass.delete();
+    while (true) {
+      const scan = scans.find((item) => item.status === "queued" || item.status === "processing");
+      if (!scan) break;
+      await processQueuedScan(scan);
     }
+  } finally {
+    queueRunning = false;
+  }
+}
 
-    if (!best) {
-      best = safeFrameCandidate(work.cols, work.rows);
-    }
+async function processQueuedScan(scan) {
+  try {
+    await updateScan(scan.id, { status: "processing", progress: 8, note: "壓縮照片" });
+    const key = await getGeminiKey();
+    if (!key) throw new Error("尚未輸入 Gemini API key");
+    if (!confirmGeminiUpload()) throw new Error("已取消 AI 處理");
 
-    const points = best.points.map((point) => ({
-      x: point.x / detectScale,
-      y: point.y / detectScale
-    }));
-    const ordered = orderCorners(points);
-    const size = outputSize(ordered, mode);
-    const warped = warpFromPoints(src, ordered, size.width, size.height);
+    const sourceCanvas = await blobToCanvas(scan.originalBlob, 1600);
+    await updateScan(scan.id, { progress: 18, note: "準備上傳" });
+    const base64 = await canvasToJpegBase64(sourceCanvas, 1280, 0.78);
+    await updateScan(scan.id, { progress: 32, note: "AI 找邊中" });
 
-    cv.imshow(els.resultCanvas, warped);
-    warped.delete();
+    const points = await askGeminiForCorners(key, base64, sourceCanvas.width, sourceCanvas.height);
+    await updateScan(scan.id, { progress: 82, note: "校正圖片" });
+    const resultCanvas = cropWithPoints(sourceCanvas, points, scan.mode);
+    const blob = await canvasToBlob(resultCanvas, "image/jpeg", 0.92);
 
-    return {
-      canvas: els.resultCanvas,
-      type: "image/jpeg",
-      points: ordered,
-      note: best.note
-    };
+    await updateScan(scan.id, {
+      status: "done",
+      progress: 100,
+      note: "完成",
+      blob,
+      originalBlob: null
+    });
+    flashOverlay(points, sourceCanvas);
   } catch (error) {
     console.error(error);
-    return copyOriginal(canvas, "已存原圖");
-  } finally {
-    src.delete();
-    work.delete();
-    gray.delete();
-    equalized.delete();
-    blur.delete();
+    await updateScan(scan.id, {
+      status: "failed",
+      progress: 100,
+      note: error.message || "AI 處理失敗"
+    });
   }
 }
 
-function findBestDocumentCandidate(binary, frameArea) {
-  const contours = new cv.MatVector();
-  const hierarchy = new cv.Mat();
-  let best = null;
-
-  try {
-    cv.findContours(binary, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-
-    for (let i = 0; i < contours.size(); i++) {
-      const contour = contours.get(i);
-      const area = Math.abs(cv.contourArea(contour));
-      const minArea = frameArea * 0.025;
-      const maxArea = frameArea * 0.985;
-
-      if (area >= minArea && area <= maxArea) {
-        const quad = candidateFromApprox(contour, area, frameArea);
-        const corners = candidateFromContourCorners(contour, area, frameArea);
-        const rotated = candidateFromMinAreaRect(contour, area, frameArea);
-
-        for (const candidate of [quad, corners, rotated]) {
-          if (candidate && (!best || candidate.score > best.score)) {
-            best = candidate;
-          }
+async function askGeminiForCorners(key, base64, width, height) {
+  const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": key
+    },
+    body: JSON.stringify({
+      model: GEMINI_MODEL,
+      input: [
+        {
+          type: "text",
+          text: [
+            "Find the four visible corners of the main document or ID card in this image.",
+            "Return JSON only, no markdown.",
+            "Coordinates must be normalized from 0 to 1000 relative to the full image.",
+            "Use this exact shape:",
+            "{\"points\":[{\"x\":0,\"y\":0},{\"x\":1000,\"y\":0},{\"x\":1000,\"y\":1000},{\"x\":0,\"y\":1000}],\"confidence\":0.0}",
+            "Point order must be top-left, top-right, bottom-right, bottom-left.",
+            "If unsure, estimate the document rectangle."
+          ].join(" ")
+        },
+        {
+          type: "image",
+          data: base64,
+          mime_type: "image/jpeg"
         }
-      }
+      ]
+    })
+  });
 
-      contour.delete();
-    }
-  } finally {
-    contours.delete();
-    hierarchy.delete();
-  }
-
-  return best;
+  if (!response.ok) throw new Error(`Gemini API ${response.status}`);
+  const data = await response.json();
+  const parsed = parseJsonFromText(extractText(data));
+  return normalizeGeminiPoints(parsed, width, height);
 }
 
-function candidateFromApprox(contour, area, frameArea) {
-  const perimeter = cv.arcLength(contour, true);
-  let best = null;
+async function getGeminiKey() {
+  let key = localStorage.getItem(GEMINI_KEY) || "";
+  if (key) return key;
 
-  for (const epsilon of [0.01, 0.016, 0.024, 0.035, 0.055, 0.08]) {
-    const approx = new cv.Mat();
-    cv.approxPolyDP(contour, approx, epsilon * perimeter, true);
+  key = prompt("貼上 Google AI Studio / Gemini API key。Key 只會存在這台裝置的瀏覽器本地，不會寫進 GitHub。") || "";
+  key = key.trim();
+  if (!key) return "";
 
-    if (approx.rows === 4 && cv.isContourConvex(approx)) {
-      const points = extractIntPoints(approx);
-      const quadArea = polygonArea(points);
-      const quality = shapeQuality(points, frameArea);
-      const score = quadArea * 1.25 + area * 0.2 + quality * frameArea * 0.18;
-      best = scoreCandidate(best, { points, score, note: "已抓到外框" });
-    }
-
-    approx.delete();
-  }
-
-  return best;
+  localStorage.setItem(GEMINI_KEY, key);
+  return key;
 }
 
-function candidateFromContourCorners(contour, area, frameArea) {
-  const points = extractContourCornerPoints(contour);
-  if (!points) return null;
-
-  const quadArea = polygonArea(orderCorners(points));
-  if (quadArea < frameArea * 0.02) return null;
-
-  return {
-    points,
-    score: quadArea * 1.05 + area * 0.18 + shapeQuality(points, frameArea) * frameArea * 0.14,
-    note: "已用角點校正"
-  };
+function confirmGeminiUpload() {
+  if (localStorage.getItem(GEMINI_CONSENT) === "1") return true;
+  const ok = confirm("AI 處理會把這張照片傳到 Google Gemini API。文件和證件可能含個資，確定要使用嗎？");
+  if (ok) localStorage.setItem(GEMINI_CONSENT, "1");
+  return ok;
 }
 
-function candidateFromMinAreaRect(contour, area, frameArea) {
-  const rect = cv.minAreaRect(contour);
-  const rectArea = rect.size.width * rect.size.height;
-
-  if (rectArea < frameArea * 0.035 || rectArea > frameArea * 0.985) return null;
-
-  const ratio = Math.max(rect.size.width, rect.size.height) / Math.max(1, Math.min(rect.size.width, rect.size.height));
-  if (ratio > 8) return null;
-
-  const points = rotatedRectPoints(rect);
-  const fill = Math.min(1, area / Math.max(1, rectArea));
-
-  return {
-    points,
-    score: rectArea * (0.66 + fill * 0.22) + shapeQuality(points, frameArea) * frameArea * 0.08,
-    note: "已用旋轉外框"
-  };
+function extractText(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (value.output_text) return value.output_text;
+  if (Array.isArray(value)) return value.map(extractText).filter(Boolean).join("\n");
+  if (typeof value === "object") return Object.values(value).map(extractText).filter(Boolean).join("\n");
+  return "";
 }
 
-function safeFrameCandidate(width, height) {
-  const insetX = Math.round(width * 0.025);
-  const insetY = Math.round(height * 0.025);
-
-  return {
-    points: [
-      { x: insetX, y: insetY },
-      { x: width - insetX, y: insetY },
-      { x: width - insetX, y: height - insetY },
-      { x: insetX, y: height - insetY }
-    ],
-    score: 1,
-    note: "已存整張"
-  };
+function parseJsonFromText(text) {
+  const cleaned = text.replace(/```json|```/g, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start < 0 || end < start) throw new Error("AI 沒有回傳座標");
+  return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-function scoreCandidate(current, next) {
-  if (!current || next.score > current.score) return next;
-  return current;
+function normalizeGeminiPoints(parsed, width, height) {
+  const raw = parsed && Array.isArray(parsed.points) ? parsed.points : null;
+  if (!raw || raw.length < 4) throw new Error("AI 沒有找到四角");
+  return orderCorners(raw.slice(0, 4).map((point) => ({
+    x: clamp(Number(point.x) / 1000 * width, 0, width),
+    y: clamp(Number(point.y) / 1000 * height, 0, height)
+  })));
 }
 
-function makeCannyPass(source, low, high, kernelSize) {
-  const edges = new cv.Mat();
-  cv.Canny(source, edges, low, high);
-  const kernel = cv.Mat.ones(kernelSize, kernelSize, cv.CV_8U);
-  cv.dilate(edges, edges, kernel);
-  cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, kernel);
-  kernel.delete();
-  return edges;
+function cropWithPoints(canvas, points, mode) {
+  if (!cvReady) return cropBoundingBox(canvas, points);
+
+  const src = cv.imread(canvas);
+  const size = outputSize(points, mode);
+  const warped = warpFromPoints(src, points, size.width, size.height);
+  cv.imshow(els.resultCanvas, warped);
+  src.delete();
+  warped.delete();
+  return cloneCanvas(els.resultCanvas);
 }
 
-function makeThresholdPass(source, blockSize, cValue) {
-  const threshold = new cv.Mat();
-  cv.adaptiveThreshold(source, threshold, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, blockSize, cValue);
-  const inverted = new cv.Mat();
-  cv.bitwise_not(threshold, inverted);
-  const kernel = cv.Mat.ones(5, 5, cv.CV_8U);
-  cv.morphologyEx(inverted, inverted, cv.MORPH_CLOSE, kernel);
-  threshold.delete();
-  kernel.delete();
-  return inverted;
-}
-
-function extractIntPoints(mat) {
-  const points = [];
-  for (let i = 0; i < mat.rows; i++) {
-    const data = mat.intPtr(i, 0);
-    points.push({ x: data[0], y: data[1] });
-  }
-  return points;
-}
-
-function extractContourCornerPoints(contour) {
-  const rect = cv.minAreaRect(contour);
-  const center = rect.center;
-  const corners = {
-    topLeft: null,
-    topRight: null,
-    bottomRight: null,
-    bottomLeft: null
-  };
-  const distances = {
-    topLeft: -1,
-    topRight: -1,
-    bottomRight: -1,
-    bottomLeft: -1
-  };
-
-  for (let i = 0; i < contour.data32S.length; i += 2) {
-    const point = { x: contour.data32S[i], y: contour.data32S[i + 1] };
-    const distanceFromCenter = distance(point, center);
-    let key = null;
-
-    if (point.x <= center.x && point.y <= center.y) key = "topLeft";
-    else if (point.x > center.x && point.y <= center.y) key = "topRight";
-    else if (point.x > center.x && point.y > center.y) key = "bottomRight";
-    else key = "bottomLeft";
-
-    if (distanceFromCenter > distances[key]) {
-      corners[key] = point;
-      distances[key] = distanceFromCenter;
-    }
-  }
-
-  if (!corners.topLeft || !corners.topRight || !corners.bottomRight || !corners.bottomLeft) {
-    return null;
-  }
-
-  return [corners.topLeft, corners.topRight, corners.bottomRight, corners.bottomLeft];
-}
-
-function rotatedRectPoints(rect) {
-  const cx = rect.center.x;
-  const cy = rect.center.y;
-  const width = rect.size.width;
-  const height = rect.size.height;
-  const angle = rect.angle * Math.PI / 180;
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-  const halves = [
-    { x: -width / 2, y: -height / 2 },
-    { x: width / 2, y: -height / 2 },
-    { x: width / 2, y: height / 2 },
-    { x: -width / 2, y: height / 2 }
-  ];
-
-  return halves.map((point) => ({
-    x: cx + point.x * cos - point.y * sin,
-    y: cy + point.x * sin + point.y * cos
-  }));
-}
-
-function orderCorners(points) {
-  const bySum = [...points].sort((a, b) => a.x + a.y - (b.x + b.y));
-  const byDiff = [...points].sort((a, b) => a.x - a.y - (b.x - b.y));
-
-  return [
-    bySum[0],
-    byDiff[3],
-    bySum[3],
-    byDiff[0]
-  ];
-}
-
-function shapeQuality(points, frameArea) {
-  const ordered = orderCorners(points);
-  const area = polygonArea(ordered);
-  const top = distance(ordered[0], ordered[1]);
-  const right = distance(ordered[1], ordered[2]);
-  const bottom = distance(ordered[2], ordered[3]);
-  const left = distance(ordered[3], ordered[0]);
-  const width = Math.max(top, bottom);
-  const height = Math.max(right, left);
-  const ratio = Math.max(width, height) / Math.max(1, Math.min(width, height));
-  const areaScore = Math.min(1, area / (frameArea * 0.62));
-  const ratioScore = ratio > 0.9 && ratio < 3.2 ? 1 : 0.62;
-
-  return areaScore * ratioScore;
-}
-
-function polygonArea(points) {
-  let sum = 0;
-  for (let i = 0; i < points.length; i++) {
-    const current = points[i];
-    const next = points[(i + 1) % points.length];
-    sum += current.x * next.y - next.x * current.y;
-  }
-  return Math.abs(sum) / 2;
-}
-
-function outputSize(points, mode) {
-  const top = distance(points[0], points[1]);
-  const right = distance(points[1], points[2]);
-  const bottom = distance(points[2], points[3]);
-  const left = distance(points[3], points[0]);
-  let width = Math.max(top, bottom);
-  let height = Math.max(right, left);
-
-  if (mode === "card") {
-    const cardRatio = 1.586;
-    if (width >= height) {
-      height = width / cardRatio;
-    } else {
-      width = height / cardRatio;
-    }
-  }
-
-  const maxSide = 1900;
-  const scale = Math.min(1, maxSide / Math.max(width, height));
-  return {
-    width: Math.max(320, Math.round(width * scale)),
-    height: Math.max(220, Math.round(height * scale))
-  };
+function cropBoundingBox(canvas, points) {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const x = clamp(Math.min(...xs), 0, canvas.width);
+  const y = clamp(Math.min(...ys), 0, canvas.height);
+  const width = clamp(Math.max(...xs) - x, 1, canvas.width - x);
+  const height = clamp(Math.max(...ys) - y, 1, canvas.height - y);
+  els.resultCanvas.width = width;
+  els.resultCanvas.height = height;
+  els.resultCanvas.getContext("2d").drawImage(canvas, x, y, width, height, 0, 0, width, height);
+  return cloneCanvas(els.resultCanvas);
 }
 
 function warpFromPoints(src, points, width, height) {
@@ -512,25 +331,213 @@ function warpFromPoints(src, points, width, height) {
   ]);
   const matrix = cv.getPerspectiveTransform(srcTri, dstTri);
   const dst = new cv.Mat();
-
   cv.warpPerspective(src, dst, matrix, new cv.Size(width, height), cv.INTER_LINEAR, cv.BORDER_REPLICATE);
-
   srcTri.delete();
   dstTri.delete();
   matrix.delete();
   return dst;
 }
 
-function copyOriginal(canvas, note = "已存原圖") {
-  els.resultCanvas.width = canvas.width;
-  els.resultCanvas.height = canvas.height;
-  els.resultCanvas.getContext("2d").drawImage(canvas, 0, 0);
+function outputSize(points, mode) {
+  const top = distance(points[0], points[1]);
+  const right = distance(points[1], points[2]);
+  const bottom = distance(points[2], points[3]);
+  const left = distance(points[3], points[0]);
+  let width = Math.max(top, bottom);
+  let height = Math.max(right, left);
+
+  if (mode === "card") {
+    const cardRatio = 1.586;
+    if (width >= height) height = width / cardRatio;
+    else width = height / cardRatio;
+  }
+
+  const maxSide = 1900;
+  const scale = Math.min(1, maxSide / Math.max(width, height));
   return {
-    canvas: els.resultCanvas,
-    type: "image/jpeg",
-    points: null,
-    note
+    width: Math.max(320, Math.round(width * scale)),
+    height: Math.max(220, Math.round(height * scale))
   };
+}
+
+function orderCorners(points) {
+  const bySum = [...points].sort((a, b) => a.x + a.y - (b.x + b.y));
+  const byDiff = [...points].sort((a, b) => a.x - a.y - (b.x - b.y));
+  return [bySum[0], byDiff[3], bySum[3], byDiff[0]];
+}
+
+async function updateScan(id, patch) {
+  const scan = scans.find((item) => item.id === id);
+  if (!scan) return;
+  Object.assign(scan, patch);
+  await saveScan(scan);
+  renderScans();
+}
+
+function resetInterruptedJobs() {
+  for (const scan of scans) {
+    if (scan.status === "processing") {
+      scan.status = "queued";
+      scan.progress = Math.min(scan.progress || 0, 20);
+      scan.note = "重新排隊";
+      saveScan(scan);
+    }
+  }
+}
+
+function renderScans() {
+  els.strip.innerHTML = "";
+  els.countText.textContent = String(scans.length);
+
+  if (!scans.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "拍照後會先顯示進度，完成後才顯示圖片";
+    els.strip.append(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const scan of scans) {
+    const status = scan.status || "done";
+    const node = els.template.content.firstElementChild.cloneNode(true);
+    const input = node.querySelector("input");
+    const image = node.querySelector("img");
+    const title = node.querySelector(".scan-meta strong");
+    const time = node.querySelector(".scan-meta small");
+    const progress = node.querySelector(".progress-ring");
+    const progressText = node.querySelector(".progress-ring strong");
+    const progressNote = node.querySelector(".progress-card small");
+
+    node.classList.add(status === "done" ? "is-done" : status === "failed" ? "is-failed" : "is-processing");
+    input.dataset.id = scan.id;
+    input.disabled = status !== "done" || !scan.blob;
+
+    if (status === "done" && scan.blob) {
+      image.src = URL.createObjectURL(scan.blob);
+      image.onload = () => URL.revokeObjectURL(image.src);
+    }
+
+    const pct = Math.round(scan.progress || 0);
+    progress.style.setProperty("--progress", String(pct));
+    progressText.textContent = status === "failed" ? "!" : `${pct}%`;
+    progressNote.textContent = scan.note || (status === "queued" ? "等待 AI" : "處理中");
+    title.textContent = scan.name;
+    time.textContent = `${modeLabel(scan.mode)} / ${scan.note || ""}`;
+    fragment.append(node);
+  }
+  els.strip.append(fragment);
+}
+
+function selectedScans() {
+  const ids = new Set(Array.from(els.strip.querySelectorAll("input:checked")).map((input) => input.dataset.id));
+  return scans.filter((scan) => ids.has(scan.id) && scan.blob && (scan.status || "done") === "done");
+}
+
+function toggleSelectAll() {
+  const checks = Array.from(els.strip.querySelectorAll("input[type='checkbox']:not(:disabled)"));
+  const shouldCheck = checks.some((input) => !input.checked);
+  checks.forEach((input) => {
+    input.checked = shouldCheck;
+  });
+}
+
+async function shareSelected() {
+  const selected = selectedScans();
+  if (!selected.length) {
+    alert("請先選擇已完成的照片。");
+    return;
+  }
+
+  const files = selected.map((scan, index) => new File([scan.blob], `${scan.name || "scan"}-${index + 1}.jpg`, { type: "image/jpeg" }));
+  if (navigator.canShare && navigator.canShare({ files })) {
+    await navigator.share({ files, title: "掃描文件", text: "掃描文件" });
+  } else {
+    alert("這個瀏覽器不支援多張直接分享，會改成下載。");
+    await downloadSelected();
+  }
+}
+
+async function downloadSelected() {
+  const selected = selectedScans();
+  if (!selected.length) {
+    alert("請先選擇已完成的照片。");
+    return;
+  }
+
+  for (const [index, scan] of selected.entries()) {
+    const url = URL.createObjectURL(scan.blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${scan.name || "scan"}-${index + 1}.jpg`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    await wait(160);
+  }
+}
+
+async function deleteSelected() {
+  const ids = new Set(Array.from(els.strip.querySelectorAll("input:checked")).map((input) => input.dataset.id));
+  if (!ids.size) {
+    alert("請先選擇要刪除的照片。");
+    return;
+  }
+
+  await Promise.all(Array.from(ids).map((id) => deleteScan(id)));
+  scans = scans.filter((scan) => !ids.has(scan.id));
+  renderScans();
+}
+
+function startPreviewResize(event) {
+  event.preventDefault();
+  previewDrag = {
+    startY: event.clientY,
+    startHeight: els.libraryPane.getBoundingClientRect().height
+  };
+  els.resizeGrip.setPointerCapture(event.pointerId);
+  window.addEventListener("pointermove", resizePreview);
+  window.addEventListener("pointerup", stopPreviewResize, { once: true });
+}
+
+function resizePreview(event) {
+  if (!previewDrag) return;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const min = viewportHeight * 0.18;
+  const max = viewportHeight * 0.62;
+  const next = clamp(previewDrag.startHeight + previewDrag.startY - event.clientY, min, max);
+  document.documentElement.style.setProperty("--library-height", `${Math.round(next)}px`);
+}
+
+function stopPreviewResize() {
+  previewDrag = null;
+  window.removeEventListener("pointermove", resizePreview);
+}
+
+async function blobToCanvas(blob, maxSide) {
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement("canvas");
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+function cloneCanvas(source) {
+  const canvas = document.createElement("canvas");
+  canvas.width = source.width;
+  canvas.height = source.height;
+  canvas.getContext("2d").drawImage(source, 0, 0);
+  return canvas;
+}
+
+async function canvasToJpegBase64(canvas, maxSide, quality) {
+  const out = document.createElement("canvas");
+  const scale = Math.min(1, maxSide / Math.max(canvas.width, canvas.height));
+  out.width = Math.round(canvas.width * scale);
+  out.height = Math.round(canvas.height * scale);
+  out.getContext("2d").drawImage(canvas, 0, 0, out.width, out.height);
+  return out.toDataURL("image/jpeg", quality).split(",")[1];
 }
 
 function flashOverlay(points, sourceCanvas) {
@@ -539,7 +546,6 @@ function flashOverlay(points, sourceCanvas) {
   overlay.width = overlay.clientWidth * devicePixelRatio;
   overlay.height = overlay.clientHeight * devicePixelRatio;
   ctx.clearRect(0, 0, overlay.width, overlay.height);
-
   if (!points) return;
 
   const scaleX = overlay.width / sourceCanvas.width;
@@ -558,138 +564,9 @@ function flashOverlay(points, sourceCanvas) {
   setTimeout(() => ctx.clearRect(0, 0, overlay.width, overlay.height), 950);
 }
 
-function renderScans() {
-  els.strip.innerHTML = "";
-  els.countText.textContent = String(scans.length);
-
-  if (!scans.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.textContent = "拍照後會自動裁切、拉正，並顯示在這裡";
-    els.strip.append(empty);
-    return;
-  }
-
-  const fragment = document.createDocumentFragment();
-  for (const scan of scans) {
-    const node = els.template.content.firstElementChild.cloneNode(true);
-    const input = node.querySelector("input");
-    const image = node.querySelector("img");
-    const title = node.querySelector("strong");
-    const time = node.querySelector("small");
-
-    input.dataset.id = scan.id;
-    image.src = URL.createObjectURL(scan.blob);
-    image.onload = () => URL.revokeObjectURL(image.src);
-    title.textContent = scan.name;
-    time.textContent = `${modeLabel(scan.mode)} / ${scan.note}`;
-    fragment.append(node);
-  }
-
-  els.strip.append(fragment);
-}
-
-function selectedScans() {
-  const ids = new Set(Array.from(els.strip.querySelectorAll("input:checked")).map((input) => input.dataset.id));
-  return scans.filter((scan) => ids.has(scan.id));
-}
-
-function toggleSelectAll() {
-  const checks = Array.from(els.strip.querySelectorAll("input[type='checkbox']"));
-  const shouldCheck = checks.some((input) => !input.checked);
-  checks.forEach((input) => {
-    input.checked = shouldCheck;
-  });
-}
-
-async function shareSelected() {
-  const selected = selectedScans();
-  if (!selected.length) {
-    alert("請先選擇要分享的照片。");
-    return;
-  }
-
-  const files = selected.map((scan, index) => new File([scan.blob], `${scan.name || "scan"}-${index + 1}.jpg`, { type: "image/jpeg" }));
-
-  if (navigator.canShare && navigator.canShare({ files })) {
-    await navigator.share({
-      files,
-      title: "掃描文件",
-      text: "掃描文件"
-    });
-  } else if (navigator.share && files.length === 1) {
-    await navigator.share({
-      title: "掃描文件",
-      text: "掃描文件",
-      url: URL.createObjectURL(files[0])
-    });
-  } else {
-    alert("這個瀏覽器不支援多張直接分享，會改成下載。");
-    await downloadSelected();
-  }
-}
-
-async function downloadSelected() {
-  const selected = selectedScans();
-  if (!selected.length) {
-    alert("請先選擇要下載的照片。");
-    return;
-  }
-
-  for (const [index, scan] of selected.entries()) {
-    const url = URL.createObjectURL(scan.blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${scan.name || "scan"}-${index + 1}.jpg`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    await wait(160);
-  }
-}
-
-async function deleteSelected() {
-  const selected = selectedScans();
-  if (!selected.length) {
-    alert("請先選擇要刪除的照片。");
-    return;
-  }
-
-  await Promise.all(selected.map((scan) => deleteScan(scan.id)));
-  const deleted = new Set(selected.map((scan) => scan.id));
-  scans = scans.filter((scan) => !deleted.has(scan.id));
-  renderScans();
-}
-
-function startPreviewResize(event) {
-  event.preventDefault();
-  dragState = {
-    startY: event.clientY,
-    startHeight: els.libraryPane.getBoundingClientRect().height
-  };
-  els.resizeGrip.setPointerCapture(event.pointerId);
-  window.addEventListener("pointermove", resizePreview);
-  window.addEventListener("pointerup", stopPreviewResize, { once: true });
-}
-
-function resizePreview(event) {
-  if (!dragState) return;
-
-  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-  const min = viewportHeight * 0.18;
-  const max = viewportHeight * 0.62;
-  const next = clamp(dragState.startHeight + dragState.startY - event.clientY, min, max);
-  document.documentElement.style.setProperty("--library-height", `${Math.round(next)}px`);
-}
-
-function stopPreviewResize() {
-  dragState = null;
-  window.removeEventListener("pointermove", resizePreview);
-}
-
 function openDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1);
-
     request.onupgradeneeded = () => {
       const database = request.result;
       if (!database.objectStoreNames.contains(STORE_NAME)) {
@@ -729,8 +606,8 @@ function deleteScan(id) {
   });
 }
 
-function canvasToBlob(canvas, type) {
-  return new Promise((resolve) => canvas.toBlob(resolve, type, 0.92));
+function canvasToBlob(canvas, type, quality = 0.92) {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
 }
 
 function distance(a, b) {
