@@ -46,7 +46,7 @@ button:active,
   min-height: 100dvh;
   display: grid;
   grid-template-rows: minmax(72dvh, 1fr) auto;
-  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  padding: env(safe-area-inset-top) 0 0;
 }
 
 .camera-pane {
@@ -148,15 +148,23 @@ h2 {
   color: var(--accent-2);
 }
 
-.modebar {
+.bottom-controls {
   position: fixed;
-  z-index: 2;
-  left: 16px;
-  right: 16px;
-  bottom: calc(env(safe-area-inset-bottom) + 102px);
+  z-index: 50;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0 16px calc(env(safe-area-inset-bottom) + 12px);
+  background: linear-gradient(transparent, rgba(16, 20, 24, 0.88) 30%, rgba(16, 20, 24, 0.96));
+  pointer-events: none;
+}
+
+.modebar {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+  margin-bottom: 10px;
+  pointer-events: auto;
 }
 
 .mode {
@@ -175,15 +183,11 @@ h2 {
 }
 
 .capturebar {
-  position: fixed;
-  z-index: 2;
-  left: 16px;
-  right: 16px;
-  bottom: calc(env(safe-area-inset-bottom) + 14px);
   display: grid;
   grid-template-columns: 72px 1fr 72px;
   align-items: center;
   gap: 18px;
+  pointer-events: auto;
 }
 
 .icon-button,
@@ -371,16 +375,9 @@ h2 {
     border-left: 1px solid var(--line);
   }
 
-  .modebar,
-  .capturebar {
-    position: absolute;
-  }
-
-  .modebar {
-    bottom: 104px;
-  }
-
-  .capturebar {
-    bottom: 22px;
+  .bottom-controls {
+    left: auto;
+    width: min(100%, 420px);
+    padding-bottom: 20px;
   }
 }
