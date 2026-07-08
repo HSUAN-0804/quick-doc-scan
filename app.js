@@ -6,10 +6,9 @@ const els = {
   video: document.querySelector("#camera"),
   cameraEmpty: document.querySelector("#cameraEmpty"),
   overlay: document.querySelector("#overlay"),
-  nativeCamera: document.querySelector("#nativeCamera"),
+  openCamera: document.querySelector("#openCamera"),
   capture: document.querySelector("#capture"),
   filePicker: document.querySelector("#filePicker"),
-  cameraPicker: document.querySelector("#cameraPicker"),
   cvStatus: document.querySelector("#cvStatus"),
   sourceCanvas: document.querySelector("#sourceCanvas"),
   resultCanvas: document.querySelector("#resultCanvas"),
@@ -74,10 +73,9 @@ function observeOpenCvLoad() {
 }
 
 function bindEvents() {
-  els.nativeCamera.addEventListener("click", openNativeCamera);
-  els.capture.addEventListener("click", openNativeCamera);
+  els.openCamera.addEventListener("click", startCamera);
+  els.capture.addEventListener("click", captureCurrentFrame);
   els.filePicker.addEventListener("change", handlePickedFile);
-  els.cameraPicker.addEventListener("change", handlePickedFile);
   els.selectAll.addEventListener("click", toggleSelectAll);
   els.shareSelected.addEventListener("click", shareSelected);
   els.downloadSelected.addEventListener("click", downloadSelected);
@@ -93,18 +91,14 @@ function bindEvents() {
   }
 }
 
-function openNativeCamera() {
-  els.cameraPicker.click();
-}
-
 async function startCamera() {
   try {
     if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 2560 },
-        height: { ideal: 1440 },
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
         resizeMode: "none"
       },
       audio: false
@@ -129,6 +123,7 @@ async function tuneCameraTrack(stream) {
   if (caps.focusMode && caps.focusMode.includes("continuous")) advanced.push({ focusMode: "continuous" });
   if (caps.exposureMode && caps.exposureMode.includes("continuous")) advanced.push({ exposureMode: "continuous" });
   if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes("continuous")) advanced.push({ whiteBalanceMode: "continuous" });
+  if (caps.zoom && Number.isFinite(caps.zoom.min)) advanced.push({ zoom: caps.zoom.min });
 
   if (advanced.length) {
     await track.applyConstraints({ advanced }).catch(() => {});
@@ -139,6 +134,12 @@ async function captureCurrentFrame() {
   if (!els.video.videoWidth) await startCamera();
   if (!els.video.videoWidth) return;
 
+  const photoBlob = await captureStillPhoto();
+  if (photoBlob) {
+    await createScanJobFromBlob(photoBlob, "camera");
+    return;
+  }
+
   const canvas = els.sourceCanvas;
   canvas.width = els.video.videoWidth;
   canvas.height = els.video.videoHeight;
@@ -146,18 +147,45 @@ async function captureCurrentFrame() {
   await createScanJob(canvas, "camera");
 }
 
+async function captureStillPhoto() {
+  const track = cameraStream && cameraStream.getVideoTracks && cameraStream.getVideoTracks()[0];
+  if (!track || typeof ImageCapture === "undefined") return null;
+
+  try {
+    const capture = new ImageCapture(track);
+    const settings = await bestPhotoSettings(capture);
+    return await capture.takePhoto(settings);
+  } catch (error) {
+    console.warn("ImageCapture fallback", error);
+    return null;
+  }
+}
+
+async function bestPhotoSettings(capture) {
+  if (!capture.getPhotoCapabilities) return {};
+
+  try {
+    const caps = await capture.getPhotoCapabilities();
+    const settings = {};
+    if (caps.imageWidth && Number.isFinite(caps.imageWidth.max)) settings.imageWidth = caps.imageWidth.max;
+    if (caps.imageHeight && Number.isFinite(caps.imageHeight.max)) settings.imageHeight = caps.imageHeight.max;
+    return settings;
+  } catch (error) {
+    return {};
+  }
+}
+
 async function handlePickedFile(event) {
   const file = event.target.files && event.target.files[0];
   if (!file) return;
 
-  const source = event.target === els.cameraPicker ? "native-camera" : "photo";
-  await createScanJobFromBlob(file, source);
+  await createScanJobFromBlob(file, "photo");
   event.target.value = "";
 }
 
 async function createScanJob(canvas, source) {
   const mode = activeMode;
-  const originalBlob = await canvasToBlob(canvas, "image/jpeg", 0.92);
+  const originalBlob = await canvasToBlob(canvas, "image/jpeg", 0.97);
   await createScanJobFromBlob(originalBlob, source, mode);
 }
 
@@ -554,7 +582,10 @@ async function blobToCanvas(blob, maxSide) {
   const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   return canvas;
 }
 
@@ -565,7 +596,10 @@ function downscaleCanvas(canvas, maxSide) {
   const out = document.createElement("canvas");
   out.width = Math.round(canvas.width * scale);
   out.height = Math.round(canvas.height * scale);
-  out.getContext("2d").drawImage(canvas, 0, 0, out.width, out.height);
+  const ctx = out.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(canvas, 0, 0, out.width, out.height);
   return out;
 }
 
@@ -589,7 +623,10 @@ async function canvasToJpegBase64(canvas, maxSide, quality) {
   const scale = Math.min(1, maxSide / Math.max(canvas.width, canvas.height));
   out.width = Math.round(canvas.width * scale);
   out.height = Math.round(canvas.height * scale);
-  out.getContext("2d").drawImage(canvas, 0, 0, out.width, out.height);
+  const ctx = out.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(canvas, 0, 0, out.width, out.height);
   return out.toDataURL("image/jpeg", quality).split(",")[1];
 }
 
