@@ -17,6 +17,8 @@ const els = {
   shareSelected: document.querySelector("#shareSelected"),
   downloadSelected: document.querySelector("#downloadSelected"),
   clearSelected: document.querySelector("#clearSelected"),
+  libraryPane: document.querySelector("#libraryPane"),
+  resizeGrip: document.querySelector("#resizeGrip"),
   modes: Array.from(document.querySelectorAll(".mode"))
 };
 
@@ -25,6 +27,7 @@ let cameraStream;
 let cvReady = false;
 let activeMode = "document";
 let scans = [];
+let dragState = null;
 
 window.onOpenCvLoaded = () => {
   if (window.cv && cv.Mat) {
@@ -39,8 +42,7 @@ window.onOpenCvLoaded = () => {
 
 function markCvReady() {
   cvReady = true;
-  els.cvStatus.textContent = "OpenCV 可用";
-  els.cvStatus.classList.add("is-ready");
+  setStatus("OpenCV 可用", "ready");
 }
 
 async function init() {
@@ -64,9 +66,7 @@ function observeOpenCvLoad() {
   }
 
   setTimeout(() => {
-    if (!cvReady) {
-      setStatus("OpenCV 載入中", "busy");
-    }
+    if (!cvReady) setStatus("OpenCV 載入中", "busy");
   }, 1800);
 }
 
@@ -78,6 +78,7 @@ function bindEvents() {
   els.shareSelected.addEventListener("click", shareSelected);
   els.downloadSelected.addEventListener("click", downloadSelected);
   els.clearSelected.addEventListener("click", deleteSelected);
+  els.resizeGrip.addEventListener("pointerdown", startPreviewResize);
 
   for (const mode of els.modes) {
     mode.addEventListener("click", () => {
@@ -107,7 +108,7 @@ async function startCamera() {
     els.cameraEmpty.classList.add("is-hidden");
   } catch (error) {
     setStatus("相機需要 HTTPS", "busy");
-    alert("iPhone 相機需要 HTTPS 網址。你也可以先用「相簿」選照片測試。");
+    alert("iPhone 相機需要 Safari/主畫面 App 並允許相機權限。");
   }
 }
 
@@ -131,7 +132,7 @@ async function handlePickedFile(event) {
 
   const bitmap = await createImageBitmap(file);
   const canvas = els.sourceCanvas;
-  const maxSide = 2200;
+  const maxSide = 2400;
   const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);
@@ -149,7 +150,7 @@ async function processAndStore(sourceCanvas, source) {
 
   const blob = await canvasToBlob(result.canvas, result.type);
   const scan = {
-    id: crypto.randomUUID(),
+    id: makeId(),
     createdAt: Date.now(),
     name: `${modeLabel(activeMode)}-${new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`,
     source,
@@ -162,68 +163,46 @@ async function processAndStore(sourceCanvas, source) {
   scans.unshift(scan);
   renderScans();
   flashOverlay(result.points, sourceCanvas);
-  setStatus(result.note || "已保存", "ready");
+  setStatus(result.note || "已儲存", "ready");
 }
 
 function scanWithOpenCv(canvas, mode) {
   const src = cv.imread(canvas);
   const work = new cv.Mat();
   const gray = new cv.Mat();
+  const equalized = new cv.Mat();
   const blur = new cv.Mat();
   let best = null;
-  let bestFallback = null;
 
   try {
-    const maxDetectSide = 1200;
+    const maxDetectSide = 1280;
     const detectScale = Math.min(1, maxDetectSide / Math.max(src.cols, src.rows));
     cv.resize(src, work, new cv.Size(0, 0), detectScale, detectScale, cv.INTER_AREA);
     cv.cvtColor(work, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
+    cv.equalizeHist(gray, equalized);
+    cv.GaussianBlur(equalized, blur, new cv.Size(5, 5), 0);
 
     const passes = [
-      makeCannyPass(blur, 40, 120),
-      makeCannyPass(blur, 60, 180),
-      makeCannyPass(blur, 90, 240),
-      makeThresholdPass(gray)
+      makeCannyPass(blur, 30, 100, 7),
+      makeCannyPass(blur, 50, 160, 5),
+      makeCannyPass(blur, 80, 220, 3),
+      makeThresholdPass(equalized, 31, 7),
+      makeThresholdPass(gray, 51, 10)
     ];
 
     for (const pass of passes) {
-      const passContours = new cv.MatVector();
-      const passHierarchy = new cv.Mat();
-      cv.findContours(pass, passContours, passHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-      const candidate = findBestQuadrilateral(passContours, work.cols * work.rows);
-      const fallback = findBestBoundingRectangle(passContours, work.cols * work.rows);
-
-      if (candidate && (!best || candidate.score > best.score)) {
-        if (best) best.mat.delete();
-        best = candidate;
-      } else if (candidate) {
-        candidate.mat.delete();
+      const passBest = findBestDocumentCandidate(pass, work.cols * work.rows);
+      if (passBest && (!best || passBest.score > best.score)) {
+        best = passBest;
       }
-
-      if (fallback && (!bestFallback || fallback.score > bestFallback.score)) {
-        if (bestFallback) bestFallback.mat.delete();
-        bestFallback = fallback;
-      } else if (fallback) {
-        fallback.mat.delete();
-      }
-
       pass.delete();
-      passContours.delete();
-      passHierarchy.delete();
     }
 
     if (!best) {
-      if (!bestFallback) {
-        return copyOriginal(canvas, "未找到外框，已保存原圖");
-      }
-
-      best = bestFallback;
-      bestFallback = null;
+      best = safeFrameCandidate(work.cols, work.rows);
     }
 
-    const points = extractPoints(best.mat).map((point) => ({
+    const points = best.points.map((point) => ({
       x: point.x / detectScale,
       y: point.y / detectScale
     }));
@@ -238,116 +217,221 @@ function scanWithOpenCv(canvas, mode) {
       canvas: els.resultCanvas,
       type: "image/jpeg",
       points: ordered,
-      note: best.kind === "fallback" ? "已用矩形裁切" : "已裁切拉正"
+      note: best.note
     };
+  } catch (error) {
+    console.error(error);
+    return copyOriginal(canvas, "已存原圖");
   } finally {
     src.delete();
     work.delete();
     gray.delete();
+    equalized.delete();
     blur.delete();
-    if (best) best.mat.delete();
-    if (bestFallback) bestFallback.mat.delete();
   }
 }
 
-function findBestQuadrilateral(contours, frameArea) {
+function findBestDocumentCandidate(binary, frameArea) {
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
   let best = null;
-  let bestScore = 0;
 
-  for (let i = 0; i < contours.size(); i++) {
-    const contour = contours.get(i);
-    const perimeter = cv.arcLength(contour, true);
-    const area = Math.abs(cv.contourArea(contour));
+  try {
+    cv.findContours(binary, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
-    if (area > frameArea * 0.035) {
-      for (const epsilon of [0.012, 0.018, 0.026, 0.038, 0.055]) {
-        const approx = new cv.Mat();
-        cv.approxPolyDP(contour, approx, epsilon * perimeter, true);
+    for (let i = 0; i < contours.size(); i++) {
+      const contour = contours.get(i);
+      const area = Math.abs(cv.contourArea(contour));
+      const minArea = frameArea * 0.025;
+      const maxArea = frameArea * 0.985;
 
-        const approxArea = Math.abs(cv.contourArea(approx));
-        const isCandidate = approx.rows === 4 && approxArea > frameArea * 0.035 && cv.isContourConvex(approx);
-        const score = approxArea - Math.abs(approxArea - area) * 0.08;
+      if (area >= minArea && area <= maxArea) {
+        const quad = candidateFromApprox(contour, area, frameArea);
+        const corners = candidateFromContourCorners(contour, area, frameArea);
+        const rotated = candidateFromMinAreaRect(contour, area, frameArea);
 
-        if (isCandidate && score > bestScore) {
-          if (best) best.delete();
-          best = approx;
-          bestScore = score;
-        } else {
-          approx.delete();
+        for (const candidate of [quad, corners, rotated]) {
+          if (candidate && (!best || candidate.score > best.score)) {
+            best = candidate;
+          }
         }
       }
-    }
 
-    contour.delete();
+      contour.delete();
+    }
+  } finally {
+    contours.delete();
+    hierarchy.delete();
   }
 
-  return best ? { mat: best, score: bestScore, kind: "quad" } : null;
+  return best;
 }
 
-function findBestBoundingRectangle(contours, frameArea) {
+function candidateFromApprox(contour, area, frameArea) {
+  const perimeter = cv.arcLength(contour, true);
   let best = null;
-  let bestScore = 0;
 
-  for (let i = 0; i < contours.size(); i++) {
-    const contour = contours.get(i);
-    const area = Math.abs(cv.contourArea(contour));
+  for (const epsilon of [0.01, 0.016, 0.024, 0.035, 0.055, 0.08]) {
+    const approx = new cv.Mat();
+    cv.approxPolyDP(contour, approx, epsilon * perimeter, true);
 
-    if (area > frameArea * 0.045) {
-      const rect = cv.boundingRect(contour);
-      const rectArea = rect.width * rect.height;
-      const fill = area / rectArea;
-      const score = rectArea * Math.min(fill, 0.85);
-      const isUsable = rect.width > 80 && rect.height > 80 && rectArea < frameArea * 0.98;
-
-      if (isUsable && score > bestScore) {
-        if (best) best.delete();
-        best = matFromRect(rect);
-        bestScore = score;
-      }
+    if (approx.rows === 4 && cv.isContourConvex(approx)) {
+      const points = extractIntPoints(approx);
+      const quadArea = polygonArea(points);
+      const quality = shapeQuality(points, frameArea);
+      const score = quadArea * 1.25 + area * 0.2 + quality * frameArea * 0.18;
+      best = scoreCandidate(best, { points, score, note: "已抓到外框" });
     }
 
-    contour.delete();
+    approx.delete();
   }
 
-  return best ? { mat: best, score: bestScore * 0.72, kind: "fallback" } : null;
+  return best;
 }
 
-function makeCannyPass(source, low, high) {
+function candidateFromContourCorners(contour, area, frameArea) {
+  const points = extractContourCornerPoints(contour);
+  if (!points) return null;
+
+  const quadArea = polygonArea(orderCorners(points));
+  if (quadArea < frameArea * 0.02) return null;
+
+  return {
+    points,
+    score: quadArea * 1.05 + area * 0.18 + shapeQuality(points, frameArea) * frameArea * 0.14,
+    note: "已用角點校正"
+  };
+}
+
+function candidateFromMinAreaRect(contour, area, frameArea) {
+  const rect = cv.minAreaRect(contour);
+  const rectArea = rect.size.width * rect.size.height;
+
+  if (rectArea < frameArea * 0.035 || rectArea > frameArea * 0.985) return null;
+
+  const ratio = Math.max(rect.size.width, rect.size.height) / Math.max(1, Math.min(rect.size.width, rect.size.height));
+  if (ratio > 8) return null;
+
+  const points = rotatedRectPoints(rect);
+  const fill = Math.min(1, area / Math.max(1, rectArea));
+
+  return {
+    points,
+    score: rectArea * (0.66 + fill * 0.22) + shapeQuality(points, frameArea) * frameArea * 0.08,
+    note: "已用旋轉外框"
+  };
+}
+
+function safeFrameCandidate(width, height) {
+  const insetX = Math.round(width * 0.025);
+  const insetY = Math.round(height * 0.025);
+
+  return {
+    points: [
+      { x: insetX, y: insetY },
+      { x: width - insetX, y: insetY },
+      { x: width - insetX, y: height - insetY },
+      { x: insetX, y: height - insetY }
+    ],
+    score: 1,
+    note: "已存整張"
+  };
+}
+
+function scoreCandidate(current, next) {
+  if (!current || next.score > current.score) return next;
+  return current;
+}
+
+function makeCannyPass(source, low, high, kernelSize) {
   const edges = new cv.Mat();
   cv.Canny(source, edges, low, high);
-  const kernel = cv.Mat.ones(5, 5, cv.CV_8U);
+  const kernel = cv.Mat.ones(kernelSize, kernelSize, cv.CV_8U);
   cv.dilate(edges, edges, kernel);
   cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, kernel);
   kernel.delete();
   return edges;
 }
 
-function makeThresholdPass(source) {
+function makeThresholdPass(source, blockSize, cValue) {
   const threshold = new cv.Mat();
-  cv.adaptiveThreshold(source, threshold, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 8);
-  cv.bitwise_not(threshold, threshold);
+  cv.adaptiveThreshold(source, threshold, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, blockSize, cValue);
+  const inverted = new cv.Mat();
+  cv.bitwise_not(threshold, inverted);
   const kernel = cv.Mat.ones(5, 5, cv.CV_8U);
-  cv.morphologyEx(threshold, threshold, cv.MORPH_CLOSE, kernel);
+  cv.morphologyEx(inverted, inverted, cv.MORPH_CLOSE, kernel);
+  threshold.delete();
   kernel.delete();
-  return threshold;
+  return inverted;
 }
 
-function matFromRect(rect) {
-  return cv.matFromArray(4, 1, cv.CV_32SC2, [
-    rect.x, rect.y,
-    rect.x + rect.width, rect.y,
-    rect.x + rect.width, rect.y + rect.height,
-    rect.x, rect.y + rect.height
-  ]);
-}
-
-function extractPoints(mat) {
+function extractIntPoints(mat) {
   const points = [];
   for (let i = 0; i < mat.rows; i++) {
     const data = mat.intPtr(i, 0);
     points.push({ x: data[0], y: data[1] });
   }
   return points;
+}
+
+function extractContourCornerPoints(contour) {
+  const rect = cv.minAreaRect(contour);
+  const center = rect.center;
+  const corners = {
+    topLeft: null,
+    topRight: null,
+    bottomRight: null,
+    bottomLeft: null
+  };
+  const distances = {
+    topLeft: -1,
+    topRight: -1,
+    bottomRight: -1,
+    bottomLeft: -1
+  };
+
+  for (let i = 0; i < contour.data32S.length; i += 2) {
+    const point = { x: contour.data32S[i], y: contour.data32S[i + 1] };
+    const distanceFromCenter = distance(point, center);
+    let key = null;
+
+    if (point.x <= center.x && point.y <= center.y) key = "topLeft";
+    else if (point.x > center.x && point.y <= center.y) key = "topRight";
+    else if (point.x > center.x && point.y > center.y) key = "bottomRight";
+    else key = "bottomLeft";
+
+    if (distanceFromCenter > distances[key]) {
+      corners[key] = point;
+      distances[key] = distanceFromCenter;
+    }
+  }
+
+  if (!corners.topLeft || !corners.topRight || !corners.bottomRight || !corners.bottomLeft) {
+    return null;
+  }
+
+  return [corners.topLeft, corners.topRight, corners.bottomRight, corners.bottomLeft];
+}
+
+function rotatedRectPoints(rect) {
+  const cx = rect.center.x;
+  const cy = rect.center.y;
+  const width = rect.size.width;
+  const height = rect.size.height;
+  const angle = rect.angle * Math.PI / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const halves = [
+    { x: -width / 2, y: -height / 2 },
+    { x: width / 2, y: -height / 2 },
+    { x: width / 2, y: height / 2 },
+    { x: -width / 2, y: height / 2 }
+  ];
+
+  return halves.map((point) => ({
+    x: cx + point.x * cos - point.y * sin,
+    y: cy + point.x * sin + point.y * cos
+  }));
 }
 
 function orderCorners(points) {
@@ -362,6 +446,32 @@ function orderCorners(points) {
   ];
 }
 
+function shapeQuality(points, frameArea) {
+  const ordered = orderCorners(points);
+  const area = polygonArea(ordered);
+  const top = distance(ordered[0], ordered[1]);
+  const right = distance(ordered[1], ordered[2]);
+  const bottom = distance(ordered[2], ordered[3]);
+  const left = distance(ordered[3], ordered[0]);
+  const width = Math.max(top, bottom);
+  const height = Math.max(right, left);
+  const ratio = Math.max(width, height) / Math.max(1, Math.min(width, height));
+  const areaScore = Math.min(1, area / (frameArea * 0.62));
+  const ratioScore = ratio > 0.9 && ratio < 3.2 ? 1 : 0.62;
+
+  return areaScore * ratioScore;
+}
+
+function polygonArea(points) {
+  let sum = 0;
+  for (let i = 0; i < points.length; i++) {
+    const current = points[i];
+    const next = points[(i + 1) % points.length];
+    sum += current.x * next.y - next.x * current.y;
+  }
+  return Math.abs(sum) / 2;
+}
+
 function outputSize(points, mode) {
   const top = distance(points[0], points[1]);
   const right = distance(points[1], points[2]);
@@ -372,14 +482,14 @@ function outputSize(points, mode) {
 
   if (mode === "card") {
     const cardRatio = 1.586;
-    if (width / height > cardRatio) {
+    if (width >= height) {
       height = width / cardRatio;
     } else {
-      width = height * cardRatio;
+      width = height / cardRatio;
     }
   }
 
-  const maxSide = 1800;
+  const maxSide = 1900;
   const scale = Math.min(1, maxSide / Math.max(width, height));
   return {
     width: Math.max(320, Math.round(width * scale)),
@@ -411,7 +521,7 @@ function warpFromPoints(src, points, width, height) {
   return dst;
 }
 
-function copyOriginal(canvas, note = "已保存原圖") {
+function copyOriginal(canvas, note = "已存原圖") {
   els.resultCanvas.width = canvas.width;
   els.resultCanvas.height = canvas.height;
   els.resultCanvas.getContext("2d").drawImage(canvas, 0, 0);
@@ -455,7 +565,7 @@ function renderScans() {
   if (!scans.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = "還沒有圖片。先拍一張文件或證件。";
+    empty.textContent = "拍照後會自動裁切、拉正，並顯示在這裡";
     els.strip.append(empty);
     return;
   }
@@ -472,7 +582,7 @@ function renderScans() {
     image.src = URL.createObjectURL(scan.blob);
     image.onload = () => URL.revokeObjectURL(image.src);
     title.textContent = scan.name;
-    time.textContent = `${modeLabel(scan.mode)} · ${scan.note}`;
+    time.textContent = `${modeLabel(scan.mode)} / ${scan.note}`;
     fragment.append(node);
   }
 
@@ -495,7 +605,7 @@ function toggleSelectAll() {
 async function shareSelected() {
   const selected = selectedScans();
   if (!selected.length) {
-    alert("請先選取要分享的圖片。");
+    alert("請先選擇要分享的照片。");
     return;
   }
 
@@ -514,7 +624,7 @@ async function shareSelected() {
       url: URL.createObjectURL(files[0])
     });
   } else {
-    alert("這個瀏覽器不支援多檔分享，我先幫你下載選取圖片。");
+    alert("這個瀏覽器不支援多張直接分享，會改成下載。");
     await downloadSelected();
   }
 }
@@ -522,7 +632,7 @@ async function shareSelected() {
 async function downloadSelected() {
   const selected = selectedScans();
   if (!selected.length) {
-    alert("請先選取要下載的圖片。");
+    alert("請先選擇要下載的照片。");
     return;
   }
 
@@ -540,7 +650,7 @@ async function downloadSelected() {
 async function deleteSelected() {
   const selected = selectedScans();
   if (!selected.length) {
-    alert("請先選取要刪除的圖片。");
+    alert("請先選擇要刪除的照片。");
     return;
   }
 
@@ -548,6 +658,32 @@ async function deleteSelected() {
   const deleted = new Set(selected.map((scan) => scan.id));
   scans = scans.filter((scan) => !deleted.has(scan.id));
   renderScans();
+}
+
+function startPreviewResize(event) {
+  event.preventDefault();
+  dragState = {
+    startY: event.clientY,
+    startHeight: els.libraryPane.getBoundingClientRect().height
+  };
+  els.resizeGrip.setPointerCapture(event.pointerId);
+  window.addEventListener("pointermove", resizePreview);
+  window.addEventListener("pointerup", stopPreviewResize, { once: true });
+}
+
+function resizePreview(event) {
+  if (!dragState) return;
+
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const min = viewportHeight * 0.18;
+  const max = viewportHeight * 0.62;
+  const next = clamp(dragState.startHeight + dragState.startY - event.clientY, min, max);
+  document.documentElement.style.setProperty("--library-height", `${Math.round(next)}px`);
+}
+
+function stopPreviewResize() {
+  dragState = null;
+  window.removeEventListener("pointermove", resizePreview);
 }
 
 function openDb() {
@@ -601,6 +737,15 @@ function distance(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function makeId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function modeLabel(mode) {
   return {
     document: "文件",
@@ -627,5 +772,5 @@ function registerServiceWorker() {
 
 init().catch((error) => {
   console.error(error);
-  alert("初始化失敗，請重新整理。");
+  alert("啟動失敗，請重新整理後再試。");
 });
