@@ -10,7 +10,7 @@
   --accent-2: #52a7ff;
   --danger: #ff6b5f;
   --shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
-  --library-height: calc(env(safe-area-inset-bottom) + 176px);
+  --library-height: calc(env(safe-area-inset-bottom) + 44px);
 }
 
 * {
