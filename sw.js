@@ -1,9 +1,9 @@
-const CACHE_NAME = "quick-scan-shell-v18";
+const CACHE_NAME = "quick-scan-shell-v19";
 const SHELL = [
   "./",
-  "./index.html?v=18",
-  "./styles.css?v=18",
-  "./app.js?v=18",
+  "./index.html?v=19",
+  "./styles.css?v=19",
+  "./app.js?v=19",
   "./manifest.webmanifest"
 ];
 
@@ -35,7 +35,7 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
           return response;
         })
-        .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html?v=18")))
+        .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html?v=19")))
     );
     return;
   }
