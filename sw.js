@@ -1,4 +1,4 @@
-const CACHE_NAME = "quick-scan-shell-v1";
+const CACHE_NAME = "quick-scan-shell-v2";
 const SHELL = [
   "./",
   "./index.html",
