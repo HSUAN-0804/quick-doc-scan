@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101418">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="快掃">
+  <title>快掃</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+  <script async src="https://docs.opencv.org/4.x/opencv.js" onload="window.onOpenCvLoaded && window.onOpenCvLoaded()"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <section class="camera-pane" aria-label="相機掃描">
+      <video id="camera" playsinline autoplay muted></video>
+      <div class="camera-empty" id="cameraEmpty">
+        <strong>快掃</strong>
+        <span>文件、證件連拍裁切</span>
+      </div>
+      <canvas id="overlay"></canvas>
+      <div class="topbar">
+        <div>
+          <p class="eyebrow">本機處理</p>
+          <h1>文件快拍</h1>
+        </div>
+        <div class="status-pill" id="cvStatus">載入 OpenCV...</div>
+      </div>
+      <div class="modebar" role="group" aria-label="掃描模式">
+        <button class="mode is-active" data-mode="document" type="button">文件</button>
+        <button class="mode" data-mode="card" type="button">證件</button>
+        <button class="mode" data-mode="original" type="button">原圖</button>
+      </div>
+      <div class="capturebar">
+        <button class="icon-button" id="openCamera" type="button" title="開啟相機" aria-label="開啟相機">相機</button>
+        <button class="shutter" id="capture" type="button" aria-label="拍照"></button>
+        <label class="icon-button file-button" title="選照片">
+          相簿
+          <input id="filePicker" type="file" accept="image/*">
+        </label>
+      </div>
+    </section>
+
+    <section class="library-pane" aria-label="已掃描圖片">
+      <div class="library-head">
+        <div>
+          <p class="eyebrow">本地保存</p>
+          <h2>掃描結果 <span id="countText">0</span></h2>
+        </div>
+        <button id="selectAll" type="button">全選</button>
+      </div>
+      <div class="actions">
+        <button id="shareSelected" type="button">分享選取</button>
+        <button id="downloadSelected" type="button">下載</button>
+        <button id="clearSelected" type="button">刪除</button>
+      </div>
+      <div class="strip" id="strip" aria-live="polite">
+        <div class="empty-state">還沒有圖片。先拍一張文件或證件。</div>
+      </div>
+    </section>
+  </main>
+
+  <canvas id="sourceCanvas" hidden></canvas>
+  <canvas id="resultCanvas" hidden></canvas>
+
+  <template id="scanTemplate">
+    <article class="scan-card">
+      <label class="check-wrap">
+        <input type="checkbox">
+        <span></span>
+      </label>
+      <img alt="掃描結果">
+      <div class="scan-meta">
+        <strong></strong>
+        <small></small>
+      </div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
