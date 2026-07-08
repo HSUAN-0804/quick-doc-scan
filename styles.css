@@ -26,6 +26,9 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
 }
 
 button,
@@ -352,9 +355,12 @@ body.library-expanded .bottom-controls {
   background-position: 0 0, 0 9px, 9px -9px, -9px 0;
 }
 
-.scan-card.is-processing img,
+.scan-card.is-processing img {
+  filter: saturate(0.82) brightness(0.72);
+}
+
 .scan-card.is-failed img {
-  display: none;
+  filter: saturate(0.7) brightness(0.55);
 }
 
 .scan-card.is-done .progress-card {
@@ -362,12 +368,16 @@ body.library-expanded .bottom-controls {
 }
 
 .progress-card {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
   display: grid;
   place-items: center;
   align-content: center;
   gap: 10px;
-  background: radial-gradient(circle at 50% 35%, #20282f, #0d1115 68%);
+  background: radial-gradient(circle at 50% 35%, rgba(16, 22, 27, 0.84), rgba(7, 10, 13, 0.62) 68%);
   color: var(--muted);
+  backdrop-filter: blur(1.5px);
 }
 
 .progress-ring {
