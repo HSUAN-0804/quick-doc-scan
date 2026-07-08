@@ -215,6 +215,10 @@ h2 {
   display: none;
 }
 
+.hidden-picker {
+  display: none;
+}
+
 .shutter {
   width: 74px;
   height: 74px;
