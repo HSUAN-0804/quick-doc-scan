@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="快掃">
   <title>快掃</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=9">
+  <link rel="stylesheet" href="styles.css?v=11">
   <script async src="https://docs.opencv.org/4.x/opencv.js" onload="window.onOpenCvLoaded && window.onOpenCvLoaded()"></script>
 </head>
 <body>
@@ -47,7 +47,7 @@
         <button id="clearSelected" type="button">刪除</button>
       </div>
       <div class="strip" id="strip" aria-live="polite">
-        <div class="empty-state">拍照後會自動裁切、拉正，並顯示在這裡</div>
+        <div class="empty-state">拍照後會顯示在這裡</div>
       </div>
     </section>
 
@@ -68,6 +68,22 @@
     </section>
   </main>
 
+  <section class="crop-editor is-hidden" id="cropEditor" aria-label="四角校正">
+    <div class="crop-head">
+      <button id="editCancel" type="button">取消</button>
+      <div>
+        <strong>拉四角校正</strong>
+        <span id="editHint">拖動綠色圓點到文件四角</span>
+      </div>
+      <button id="editSave" type="button">儲存</button>
+    </div>
+    <canvas id="editCanvas"></canvas>
+    <div class="crop-actions">
+      <button id="editAi" type="button">AI 找邊</button>
+      <button id="editWhole" type="button">用整張</button>
+    </div>
+  </section>
+
   <canvas id="sourceCanvas" hidden></canvas>
   <canvas id="resultCanvas" hidden></canvas>
 
@@ -85,6 +101,6 @@
     </article>
   </template>
 
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>
