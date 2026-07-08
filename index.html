@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="快掃">
   <title>快掃</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=4">
   <script async src="https://docs.opencv.org/4.x/opencv.js" onload="window.onOpenCvLoaded && window.onOpenCvLoaded()"></script>
 </head>
 <body>
@@ -28,19 +28,6 @@
         </div>
         <div class="status-pill" id="cvStatus">載入 OpenCV...</div>
       </div>
-      <div class="modebar" role="group" aria-label="掃描模式">
-        <button class="mode is-active" data-mode="document" type="button">文件</button>
-        <button class="mode" data-mode="card" type="button">證件</button>
-        <button class="mode" data-mode="original" type="button">原圖</button>
-      </div>
-      <div class="capturebar">
-        <button class="icon-button" id="openCamera" type="button" title="開啟相機" aria-label="開啟相機">相機</button>
-        <button class="shutter" id="capture" type="button" aria-label="拍照"></button>
-        <label class="icon-button file-button" title="選照片">
-          相簿
-          <input id="filePicker" type="file" accept="image/*">
-        </label>
-      </div>
     </section>
 
     <section class="library-pane" aria-label="已掃描圖片">
@@ -58,6 +45,22 @@
       </div>
       <div class="strip" id="strip" aria-live="polite">
         <div class="empty-state">還沒有圖片。先拍一張文件或證件。</div>
+      </div>
+    </section>
+
+    <section class="bottom-controls" aria-label="拍攝控制">
+      <div class="modebar" role="group" aria-label="掃描模式">
+        <button class="mode is-active" data-mode="document" type="button">文件</button>
+        <button class="mode" data-mode="card" type="button">證件</button>
+        <button class="mode" data-mode="original" type="button">原圖</button>
+      </div>
+      <div class="capturebar">
+        <button class="icon-button" id="openCamera" type="button" title="開啟相機" aria-label="開啟相機">相機</button>
+        <button class="shutter" id="capture" type="button" aria-label="拍照"></button>
+        <label class="icon-button file-button" title="選照片">
+          相簿
+          <input id="filePicker" type="file" accept="image/*">
+        </label>
       </div>
     </section>
   </main>
@@ -79,6 +82,6 @@
     </article>
   </template>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
