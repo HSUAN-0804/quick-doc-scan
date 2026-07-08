@@ -6,7 +6,7 @@ const els = {
   video: document.querySelector("#camera"),
   cameraEmpty: document.querySelector("#cameraEmpty"),
   overlay: document.querySelector("#overlay"),
-  openCamera: document.querySelector("#openCamera"),
+  openCamera: document.querySelector("#openCamera") || document.querySelector("#nativeCamera"),
   capture: document.querySelector("#capture"),
   filePicker: document.querySelector("#filePicker"),
   cvStatus: document.querySelector("#cvStatus"),
@@ -31,6 +31,7 @@ let activeMode = "document";
 let scans = [];
 let previewDrag = null;
 let queueRunning = false;
+let queueTimer = null;
 
 window.onOpenCvLoaded = () => {
   if (window.cv && cv.Mat) {
@@ -47,8 +48,14 @@ function markCvReady() {
 
 async function init() {
   observeOpenCvLoad();
-  db = await openDb();
-  scans = await readAllScans();
+  try {
+    db = await openDb();
+    scans = await readAllScans();
+  } catch (error) {
+    console.warn("IndexedDB 啟動失敗，改用暫存模式", error);
+    db = null;
+    scans = [];
+  }
   resetInterruptedJobs();
   preventPageZoom();
   bindEvents();
@@ -73,14 +80,14 @@ function observeOpenCvLoad() {
 }
 
 function bindEvents() {
-  els.openCamera.addEventListener("click", startCamera);
-  els.capture.addEventListener("click", captureCurrentFrame);
-  els.filePicker.addEventListener("change", handlePickedFile);
-  els.selectAll.addEventListener("click", toggleSelectAll);
-  els.shareSelected.addEventListener("click", shareSelected);
-  els.downloadSelected.addEventListener("click", downloadSelected);
-  els.clearSelected.addEventListener("click", deleteSelected);
-  els.resizeGrip.addEventListener("pointerdown", startPreviewResize);
+  bindIfPresent(els.openCamera, "click", startCamera);
+  bindIfPresent(els.capture, "click", captureCurrentFrame);
+  bindIfPresent(els.filePicker, "change", handlePickedFile);
+  bindIfPresent(els.selectAll, "click", toggleSelectAll);
+  bindIfPresent(els.shareSelected, "click", shareSelected);
+  bindIfPresent(els.downloadSelected, "click", downloadSelected);
+  bindIfPresent(els.clearSelected, "click", deleteSelected);
+  bindIfPresent(els.resizeGrip, "pointerdown", startPreviewResize);
   window.addEventListener("resize", () => syncLibraryExpanded());
 
   for (const mode of els.modes) {
@@ -89,6 +96,10 @@ function bindEvents() {
       els.modes.forEach((item) => item.classList.toggle("is-active", item === mode));
     });
   }
+}
+
+function bindIfPresent(element, eventName, handler) {
+  if (element) element.addEventListener(eventName, handler);
 }
 
 async function startCamera() {
@@ -208,7 +219,15 @@ async function createScanJobFromBlob(originalBlob, source, scanMode = activeMode
   scans.unshift(scan);
   renderScans();
   setStatus(mode === "original" ? "已儲存" : "已加入背景處理", "ready");
-  runQueue();
+  scheduleQueue();
+}
+
+function scheduleQueue() {
+  if (queueTimer) clearTimeout(queueTimer);
+  queueTimer = setTimeout(() => {
+    queueTimer = null;
+    runQueue();
+  }, 30);
 }
 
 async function runQueue() {
@@ -261,17 +280,21 @@ async function processQueuedScan(scan) {
 }
 
 async function findCornersWithWorker(base64, width, height) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+
   const response = await fetch(WORKER_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
+    signal: controller.signal,
     body: JSON.stringify({
       image: base64,
       width,
       height
     })
-  });
+  }).finally(() => clearTimeout(timeout));
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -669,10 +692,12 @@ function openDb() {
 }
 
 function txStore(mode = "readonly") {
+  if (!db) throw new Error("IndexedDB unavailable");
   return db.transaction(STORE_NAME, mode).objectStore(STORE_NAME);
 }
 
 function saveScan(scan) {
+  if (!db) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const request = txStore("readwrite").put(prepareScanForStorage(scan));
     request.onsuccess = () => resolve();
@@ -694,6 +719,7 @@ function cloneBlobForStorage(blob) {
 }
 
 function readAllScans() {
+  if (!db) return Promise.resolve([]);
   return new Promise((resolve, reject) => {
     const request = txStore().getAll();
     request.onsuccess = () => resolve(request.result.sort((a, b) => b.createdAt - a.createdAt));
@@ -702,6 +728,7 @@ function readAllScans() {
 }
 
 function deleteScan(id) {
+  if (!db) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const request = txStore("readwrite").delete(id);
     request.onsuccess = () => resolve();
