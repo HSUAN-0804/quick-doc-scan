@@ -1,10 +1,24 @@
 {
   "name": "快掃文件",
   "short_name": "快掃",
-  "start_url": "./index.html",
+  "start_url": "./index.html?v=24",
   "display": "standalone",
   "background_color": "#101418",
   "theme_color": "#101418",
   "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icons/icon-192.png?v=24",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png?v=24",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
   "description": "iPhone 文件與證件快掃，支援本機裁切、拉正、儲存與分享。"
 }
