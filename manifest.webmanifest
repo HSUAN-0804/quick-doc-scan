@@ -1,0 +1,10 @@
+{
+  "name": "快掃文件",
+  "short_name": "快掃",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#101418",
+  "theme_color": "#101418",
+  "orientation": "portrait",
+  "description": "iPhone 文件與證件快拍、裁切、拉正、分享。"
+}
