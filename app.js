@@ -6,9 +6,10 @@ const els = {
   video: document.querySelector("#camera"),
   cameraEmpty: document.querySelector("#cameraEmpty"),
   overlay: document.querySelector("#overlay"),
-  openCamera: document.querySelector("#openCamera"),
+  nativeCamera: document.querySelector("#nativeCamera"),
   capture: document.querySelector("#capture"),
   filePicker: document.querySelector("#filePicker"),
+  cameraPicker: document.querySelector("#cameraPicker"),
   cvStatus: document.querySelector("#cvStatus"),
   sourceCanvas: document.querySelector("#sourceCanvas"),
   resultCanvas: document.querySelector("#resultCanvas"),
@@ -50,6 +51,7 @@ async function init() {
   db = await openDb();
   scans = await readAllScans();
   resetInterruptedJobs();
+  preventPageZoom();
   bindEvents();
   syncLibraryExpanded();
   renderScans();
@@ -72,9 +74,10 @@ function observeOpenCvLoad() {
 }
 
 function bindEvents() {
-  els.openCamera.addEventListener("click", startCamera);
-  els.capture.addEventListener("click", captureCurrentFrame);
+  els.nativeCamera.addEventListener("click", openNativeCamera);
+  els.capture.addEventListener("click", openNativeCamera);
   els.filePicker.addEventListener("change", handlePickedFile);
+  els.cameraPicker.addEventListener("change", handlePickedFile);
   els.selectAll.addEventListener("click", toggleSelectAll);
   els.shareSelected.addEventListener("click", shareSelected);
   els.downloadSelected.addEventListener("click", downloadSelected);
@@ -88,6 +91,10 @@ function bindEvents() {
       els.modes.forEach((item) => item.classList.toggle("is-active", item === mode));
     });
   }
+}
+
+function openNativeCamera() {
+  els.cameraPicker.click();
 }
 
 async function startCamera() {
@@ -143,20 +150,19 @@ async function handlePickedFile(event) {
   const file = event.target.files && event.target.files[0];
   if (!file) return;
 
-  const bitmap = await createImageBitmap(file);
-  const canvas = els.sourceCanvas;
-  const maxSide = 2400;
-  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  await createScanJob(canvas, "photo");
+  const source = event.target === els.cameraPicker ? "native-camera" : "photo";
+  await createScanJobFromBlob(file, source);
   event.target.value = "";
 }
 
 async function createScanJob(canvas, source) {
   const mode = activeMode;
   const originalBlob = await canvasToBlob(canvas, "image/jpeg", 0.92);
+  await createScanJobFromBlob(originalBlob, source, mode);
+}
+
+async function createScanJobFromBlob(originalBlob, source, scanMode = activeMode) {
+  const mode = scanMode;
   const scan = {
     id: makeId(),
     createdAt: Date.now(),
@@ -195,7 +201,7 @@ async function runQueue() {
 async function processQueuedScan(scan) {
   try {
     await updateScan(scan.id, { status: "processing", progress: 8, note: "讀取原圖" }, { persist: false });
-    const sourceCanvas = await blobToCanvas(scan.originalBlob, 2600);
+    const sourceCanvas = await blobToCanvas(scan.originalBlob, 3200);
     const aiCanvas = downscaleCanvas(sourceCanvas, 1280);
     await updateScan(scan.id, { progress: 18, note: "準備上傳" }, { persist: false });
     const base64 = await canvasToJpegBase64(aiCanvas, 1280, 0.82);
@@ -366,7 +372,7 @@ function outputSize(points, mode) {
     else width = height / cardRatio;
   }
 
-  const maxSide = 2600;
+  const maxSide = 3200;
   const scale = Math.min(1, maxSide / Math.max(width, height));
   return {
     width: Math.max(320, Math.round(width * scale)),
@@ -704,6 +710,26 @@ function wait(ms) {
 function registerServiceWorker() {
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+}
+
+function preventPageZoom() {
+  let lastTouchEnd = 0;
+
+  document.addEventListener("touchend", (event) => {
+    const now = Date.now();
+    if (now - lastTouchEnd < 360) event.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
+
+  document.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+  }, { passive: false });
+
+  for (const eventName of ["gesturestart", "gesturechange", "gestureend"]) {
+    document.addEventListener(eventName, (event) => {
+      event.preventDefault();
+    }, { passive: false });
   }
 }
 
