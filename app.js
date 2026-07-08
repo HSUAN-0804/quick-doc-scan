@@ -96,17 +96,35 @@ async function startCamera() {
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
+        width: { ideal: 2560 },
+        height: { ideal: 1440 },
+        resizeMode: "none"
       },
       audio: false
     });
+    await tuneCameraTrack(cameraStream);
     els.video.srcObject = cameraStream;
     await els.video.play();
     els.cameraEmpty.classList.add("is-hidden");
   } catch (error) {
     setStatus("相機需要 HTTPS", "busy");
     alert("iPhone 相機需要 Safari/主畫面 App 並允許相機權限。");
+  }
+}
+
+async function tuneCameraTrack(stream) {
+  const track = stream.getVideoTracks && stream.getVideoTracks()[0];
+  if (!track || !track.getCapabilities || !track.applyConstraints) return;
+
+  const caps = track.getCapabilities();
+  const advanced = [];
+
+  if (caps.focusMode && caps.focusMode.includes("continuous")) advanced.push({ focusMode: "continuous" });
+  if (caps.exposureMode && caps.exposureMode.includes("continuous")) advanced.push({ exposureMode: "continuous" });
+  if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes("continuous")) advanced.push({ whiteBalanceMode: "continuous" });
+
+  if (advanced.length) {
+    await track.applyConstraints({ advanced }).catch(() => {});
   }
 }
 
@@ -176,17 +194,19 @@ async function runQueue() {
 
 async function processQueuedScan(scan) {
   try {
-    await updateScan(scan.id, { status: "processing", progress: 8, note: "壓縮照片" });
-    const sourceCanvas = await blobToCanvas(scan.originalBlob, 1600);
-    await updateScan(scan.id, { progress: 18, note: "準備上傳" });
-    const base64 = await canvasToJpegBase64(sourceCanvas, 1280, 0.78);
-    await updateScan(scan.id, { progress: 32, note: "AI 找邊中" });
+    await updateScan(scan.id, { status: "processing", progress: 8, note: "讀取原圖" }, { persist: false });
+    const sourceCanvas = await blobToCanvas(scan.originalBlob, 2600);
+    const aiCanvas = downscaleCanvas(sourceCanvas, 1280);
+    await updateScan(scan.id, { progress: 18, note: "準備上傳" }, { persist: false });
+    const base64 = await canvasToJpegBase64(aiCanvas, 1280, 0.82);
+    await updateScan(scan.id, { progress: 32, note: "AI 找邊中" }, { persist: false });
 
-    const points = await findCornersWithWorker(base64, sourceCanvas.width, sourceCanvas.height);
-    await updateScan(scan.id, { progress: 82, note: "校正圖片" });
+    const aiPoints = await findCornersWithWorker(base64, aiCanvas.width, aiCanvas.height);
+    const points = scalePoints(aiPoints, sourceCanvas.width / aiCanvas.width, sourceCanvas.height / aiCanvas.height);
+    await updateScan(scan.id, { progress: 82, note: "校正圖片" }, { persist: false });
     const resultCanvas = cropWithPoints(sourceCanvas, points, scan.mode);
     if (canvasLooksFlat(resultCanvas)) throw new Error("AI 結果像色塊，請重拍清楚一點");
-    const blob = await canvasToBlob(resultCanvas, "image/jpeg", 0.92);
+    const blob = await canvasToBlob(resultCanvas, "image/jpeg", 0.95);
 
     await updateScan(scan.id, {
       status: "done",
@@ -346,7 +366,7 @@ function outputSize(points, mode) {
     else width = height / cardRatio;
   }
 
-  const maxSide = 1900;
+  const maxSide = 2600;
   const scale = Math.min(1, maxSide / Math.max(width, height));
   return {
     width: Math.max(320, Math.round(width * scale)),
@@ -360,11 +380,11 @@ function orderCorners(points) {
   return [bySum[0], byDiff[3], bySum[3], byDiff[0]];
 }
 
-async function updateScan(id, patch) {
+async function updateScan(id, patch, options = {}) {
   const scan = scans.find((item) => item.id === id);
   if (!scan) return;
   Object.assign(scan, patch);
-  await saveScan(scan);
+  if (options.persist !== false) await saveScan(scan);
   renderScans();
 }
 
@@ -532,6 +552,24 @@ async function blobToCanvas(blob, maxSide) {
   return canvas;
 }
 
+function downscaleCanvas(canvas, maxSide) {
+  const scale = Math.min(1, maxSide / Math.max(canvas.width, canvas.height));
+  if (scale >= 1) return cloneCanvas(canvas);
+
+  const out = document.createElement("canvas");
+  out.width = Math.round(canvas.width * scale);
+  out.height = Math.round(canvas.height * scale);
+  out.getContext("2d").drawImage(canvas, 0, 0, out.width, out.height);
+  return out;
+}
+
+function scalePoints(points, scaleX, scaleY) {
+  return points.map((point) => ({
+    x: point.x * scaleX,
+    y: point.y * scaleY
+  }));
+}
+
 function cloneCanvas(source) {
   const canvas = document.createElement("canvas");
   canvas.width = source.width;
@@ -593,10 +631,23 @@ function txStore(mode = "readonly") {
 
 function saveScan(scan) {
   return new Promise((resolve, reject) => {
-    const request = txStore("readwrite").put(scan);
+    const request = txStore("readwrite").put(prepareScanForStorage(scan));
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
+}
+
+function prepareScanForStorage(scan) {
+  return {
+    ...scan,
+    blob: cloneBlobForStorage(scan.blob),
+    originalBlob: cloneBlobForStorage(scan.originalBlob)
+  };
+}
+
+function cloneBlobForStorage(blob) {
+  if (!(blob instanceof Blob)) return blob || null;
+  return blob.slice(0, blob.size, blob.type || "image/jpeg");
 }
 
 function readAllScans() {
