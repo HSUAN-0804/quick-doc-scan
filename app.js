@@ -53,6 +53,7 @@ async function init() {
   scans = await readAllScans();
   resetInterruptedJobs();
   bindEvents();
+  syncLibraryExpanded();
   renderScans();
   runQueue();
   registerServiceWorker();
@@ -81,6 +82,7 @@ function bindEvents() {
   els.downloadSelected.addEventListener("click", downloadSelected);
   els.clearSelected.addEventListener("click", deleteSelected);
   els.resizeGrip.addEventListener("pointerdown", startPreviewResize);
+  window.addEventListener("resize", () => syncLibraryExpanded());
 
   for (const mode of els.modes) {
     mode.addEventListener("click", () => {
@@ -503,14 +505,21 @@ function resizePreview(event) {
   if (!previewDrag) return;
   const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
   const min = viewportHeight * 0.18;
-  const max = viewportHeight * 0.62;
+  const max = viewportHeight * 0.96;
   const next = clamp(previewDrag.startHeight + previewDrag.startY - event.clientY, min, max);
   document.documentElement.style.setProperty("--library-height", `${Math.round(next)}px`);
+  syncLibraryExpanded(next, viewportHeight);
 }
 
 function stopPreviewResize() {
   previewDrag = null;
   window.removeEventListener("pointermove", resizePreview);
+}
+
+function syncLibraryExpanded(height, viewportHeight) {
+  const viewHeight = viewportHeight || window.innerHeight || document.documentElement.clientHeight;
+  const currentHeight = height || els.libraryPane.getBoundingClientRect().height;
+  document.body.classList.toggle("library-expanded", currentHeight >= viewHeight * 0.75);
 }
 
 async function blobToCanvas(blob, maxSide) {
