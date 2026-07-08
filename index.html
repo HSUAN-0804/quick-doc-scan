@@ -9,79 +9,45 @@
   <meta name="apple-mobile-web-app-title" content="快掃">
   <title>快掃</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=5">
-  <style>
-    .bottom-controls {
-      position: fixed !important;
-      z-index: 999 !important;
-      left: 0 !important;
-      right: 0 !important;
-      top: auto !important;
-      bottom: 0 !important;
-      padding: 0 16px calc(env(safe-area-inset-bottom) + 12px) !important;
-      background: linear-gradient(transparent, rgba(16, 20, 24, 0.88) 30%, rgba(16, 20, 24, 0.96)) !important;
-      pointer-events: none !important;
-    }
-    .bottom-controls .modebar,
-    .bottom-controls .capturebar {
-      position: static !important;
-      left: auto !important;
-      right: auto !important;
-      top: auto !important;
-      bottom: auto !important;
-      pointer-events: auto !important;
-    }
-    .bottom-controls .modebar {
-      display: grid !important;
-      grid-template-columns: repeat(3, 1fr) !important;
-      gap: 8px !important;
-      margin-bottom: 10px !important;
-    }
-    .bottom-controls .capturebar {
-      display: grid !important;
-      grid-template-columns: 72px 1fr 72px !important;
-      align-items: center !important;
-      gap: 18px !important;
-    }
-    .library-pane {
-      padding-bottom: calc(env(safe-area-inset-bottom) + 112px) !important;
-    }
-  </style>
+  <link rel="stylesheet" href="styles.css?v=9">
   <script async src="https://docs.opencv.org/4.x/opencv.js" onload="window.onOpenCvLoaded && window.onOpenCvLoaded()"></script>
 </head>
 <body>
   <main class="app-shell">
-    <section class="camera-pane" aria-label="相機掃描">
+    <section class="camera-pane" aria-label="相機畫面">
       <video id="camera" playsinline autoplay muted></video>
       <div class="camera-empty" id="cameraEmpty">
         <strong>快掃</strong>
-        <span>文件、證件連拍裁切</span>
+        <span>開啟相機，連續拍文件或證件</span>
       </div>
       <canvas id="overlay"></canvas>
       <div class="topbar">
         <div>
           <p class="eyebrow">本機處理</p>
-          <h1>文件快拍</h1>
+          <h1>文件快掃</h1>
         </div>
         <div class="status-pill" id="cvStatus">載入 OpenCV...</div>
       </div>
     </section>
 
-    <section class="library-pane" aria-label="已掃描圖片">
+    <section class="library-pane" id="libraryPane" aria-label="照片預覽區">
+      <div class="resize-grip" id="resizeGrip" aria-label="調整預覽區高度" role="separator">
+        <span></span>
+      </div>
       <div class="library-head">
         <div>
-          <p class="eyebrow">本地保存</p>
-          <h2>掃描結果 <span id="countText">0</span></h2>
+          <p class="eyebrow">已儲存</p>
+          <h2>照片 <span id="countText">0</span></h2>
         </div>
         <button id="selectAll" type="button">全選</button>
       </div>
       <div class="actions">
-        <button id="shareSelected" type="button">分享選取</button>
+        <button id="shareSelected" type="button">分享</button>
         <button id="downloadSelected" type="button">下載</button>
         <button id="clearSelected" type="button">刪除</button>
       </div>
       <div class="strip" id="strip" aria-live="polite">
-        <div class="empty-state">還沒有圖片。先拍一張文件或證件。</div>
+        <div class="empty-state">拍照後會自動裁切、拉正，並顯示在這裡</div>
       </div>
     </section>
 
@@ -94,8 +60,8 @@
       <div class="capturebar">
         <button class="icon-button" id="openCamera" type="button" title="開啟相機" aria-label="開啟相機">相機</button>
         <button class="shutter" id="capture" type="button" aria-label="拍照"></button>
-        <label class="icon-button file-button" title="選照片">
-          相簿
+        <label class="icon-button file-button" title="匯入照片">
+          匯入
           <input id="filePicker" type="file" accept="image/*">
         </label>
       </div>
@@ -119,6 +85,6 @@
     </article>
   </template>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>
