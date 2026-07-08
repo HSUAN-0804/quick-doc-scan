@@ -1,8 +1,6 @@
 const DB_NAME = "quick-scan-db";
 const STORE_NAME = "scans";
-const GEMINI_KEY = "quick-scan-gemini-key";
-const GEMINI_CONSENT = "quick-scan-gemini-consent";
-const GEMINI_MODEL = "gemini-3.5-flash";
+const WORKER_ENDPOINT = "https://quick-doc-scan-ai.a0952767271.workers.dev";
 
 const els = {
   video: document.querySelector("#camera"),
@@ -179,16 +177,12 @@ async function runQueue() {
 async function processQueuedScan(scan) {
   try {
     await updateScan(scan.id, { status: "processing", progress: 8, note: "壓縮照片" });
-    const key = await getGeminiKey();
-    if (!key) throw new Error("尚未輸入 Gemini API key");
-    if (!confirmGeminiUpload()) throw new Error("已取消 AI 處理");
-
     const sourceCanvas = await blobToCanvas(scan.originalBlob, 1600);
     await updateScan(scan.id, { progress: 18, note: "準備上傳" });
     const base64 = await canvasToJpegBase64(sourceCanvas, 1280, 0.78);
     await updateScan(scan.id, { progress: 32, note: "AI 找邊中" });
 
-    const points = await askGeminiForCorners(key, base64, sourceCanvas.width, sourceCanvas.height);
+    const points = await findCornersWithWorker(base64, sourceCanvas.width, sourceCanvas.height);
     await updateScan(scan.id, { progress: 82, note: "校正圖片" });
     const resultCanvas = cropWithPoints(sourceCanvas, points, scan.mode);
     const blob = await canvasToBlob(resultCanvas, "image/jpeg", 0.92);
@@ -211,85 +205,32 @@ async function processQueuedScan(scan) {
   }
 }
 
-async function askGeminiForCorners(key, base64, width, height) {
-  const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+async function findCornersWithWorker(base64, width, height) {
+  const response = await fetch(WORKER_ENDPOINT, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": key
+      "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: GEMINI_MODEL,
-      input: [
-        {
-          type: "text",
-          text: [
-            "Find the four visible corners of the main document or ID card in this image.",
-            "Return JSON only, no markdown.",
-            "Coordinates must be normalized from 0 to 1000 relative to the full image.",
-            "Use this exact shape:",
-            "{\"points\":[{\"x\":0,\"y\":0},{\"x\":1000,\"y\":0},{\"x\":1000,\"y\":1000},{\"x\":0,\"y\":1000}],\"confidence\":0.0}",
-            "Point order must be top-left, top-right, bottom-right, bottom-left.",
-            "If unsure, estimate the document rectangle."
-          ].join(" ")
-        },
-        {
-          type: "image",
-          data: base64,
-          mime_type: "image/jpeg"
-        }
-      ]
+      image: base64,
+      width,
+      height
     })
   });
 
-  if (!response.ok) throw new Error(`Gemini API ${response.status}`);
-  const data = await response.json();
-  const parsed = parseJsonFromText(extractText(data));
-  return normalizeGeminiPoints(parsed, width, height);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `Worker ${response.status}`);
+  }
+
+  return normalizeWorkerPoints(data.points, width, height);
 }
 
-async function getGeminiKey() {
-  let key = localStorage.getItem(GEMINI_KEY) || "";
-  if (key) return key;
-
-  key = prompt("貼上 Google AI Studio / Gemini API key。Key 只會存在這台裝置的瀏覽器本地，不會寫進 GitHub。") || "";
-  key = key.trim();
-  if (!key) return "";
-
-  localStorage.setItem(GEMINI_KEY, key);
-  return key;
-}
-
-function confirmGeminiUpload() {
-  if (localStorage.getItem(GEMINI_CONSENT) === "1") return true;
-  const ok = confirm("AI 處理會把這張照片傳到 Google Gemini API。文件和證件可能含個資，確定要使用嗎？");
-  if (ok) localStorage.setItem(GEMINI_CONSENT, "1");
-  return ok;
-}
-
-function extractText(value) {
-  if (!value) return "";
-  if (typeof value === "string") return value;
-  if (value.output_text) return value.output_text;
-  if (Array.isArray(value)) return value.map(extractText).filter(Boolean).join("\n");
-  if (typeof value === "object") return Object.values(value).map(extractText).filter(Boolean).join("\n");
-  return "";
-}
-
-function parseJsonFromText(text) {
-  const cleaned = text.replace(/```json|```/g, "").trim();
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start < 0 || end < start) throw new Error("AI 沒有回傳座標");
-  return JSON.parse(cleaned.slice(start, end + 1));
-}
-
-function normalizeGeminiPoints(parsed, width, height) {
-  const raw = parsed && Array.isArray(parsed.points) ? parsed.points : null;
-  if (!raw || raw.length < 4) throw new Error("AI 沒有找到四角");
-  return orderCorners(raw.slice(0, 4).map((point) => ({
-    x: clamp(Number(point.x) / 1000 * width, 0, width),
-    y: clamp(Number(point.y) / 1000 * height, 0, height)
+function normalizeWorkerPoints(points, width, height) {
+  if (!Array.isArray(points) || points.length < 4) throw new Error("AI 沒有找到四角");
+  return orderCorners(points.slice(0, 4).map((point) => ({
+    x: clamp(Number(point.x), 0, width),
+    y: clamp(Number(point.y), 0, height)
   })));
 }
 
