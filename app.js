@@ -170,10 +170,8 @@ function scanWithOpenCv(canvas, mode) {
   const work = new cv.Mat();
   const gray = new cv.Mat();
   const blur = new cv.Mat();
-  const edges = new cv.Mat();
-  const contours = new cv.MatVector();
-  const hierarchy = new cv.Mat();
   let best = null;
+  let bestFallback = null;
 
   try {
     const maxDetectSide = 1200;
@@ -181,20 +179,51 @@ function scanWithOpenCv(canvas, mode) {
     cv.resize(src, work, new cv.Size(0, 0), detectScale, detectScale, cv.INTER_AREA);
     cv.cvtColor(work, gray, cv.COLOR_RGBA2GRAY);
     cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
-    cv.Canny(blur, edges, 60, 180);
 
-    const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
-    cv.dilate(edges, edges, kernel);
-    kernel.delete();
+    const passes = [
+      makeCannyPass(blur, 40, 120),
+      makeCannyPass(blur, 60, 180),
+      makeCannyPass(blur, 90, 240),
+      makeThresholdPass(gray)
+    ];
 
-    cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-    best = findBestQuadrilateral(contours, work.cols * work.rows);
+    for (const pass of passes) {
+      const passContours = new cv.MatVector();
+      const passHierarchy = new cv.Mat();
+      cv.findContours(pass, passContours, passHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-    if (!best) {
-      return copyOriginal(canvas, "未找到明確邊框，先保存原圖");
+      const candidate = findBestQuadrilateral(passContours, work.cols * work.rows);
+      const fallback = findBestBoundingRectangle(passContours, work.cols * work.rows);
+
+      if (candidate && (!best || candidate.score > best.score)) {
+        if (best) best.mat.delete();
+        best = candidate;
+      } else if (candidate) {
+        candidate.mat.delete();
+      }
+
+      if (fallback && (!bestFallback || fallback.score > bestFallback.score)) {
+        if (bestFallback) bestFallback.mat.delete();
+        bestFallback = fallback;
+      } else if (fallback) {
+        fallback.mat.delete();
+      }
+
+      pass.delete();
+      passContours.delete();
+      passHierarchy.delete();
     }
 
-    const points = extractPoints(best).map((point) => ({
+    if (!best) {
+      if (!bestFallback) {
+        return copyOriginal(canvas, "未找到外框，已保存原圖");
+      }
+
+      best = bestFallback;
+      bestFallback = null;
+    }
+
+    const points = extractPoints(best.mat).map((point) => ({
       x: point.x / detectScale,
       y: point.y / detectScale
     }));
@@ -209,17 +238,15 @@ function scanWithOpenCv(canvas, mode) {
       canvas: els.resultCanvas,
       type: "image/jpeg",
       points: ordered,
-      note: "已裁切拉正"
+      note: best.kind === "fallback" ? "已用矩形裁切" : "已裁切拉正"
     };
   } finally {
     src.delete();
     work.delete();
     gray.delete();
     blur.delete();
-    edges.delete();
-    contours.delete();
-    hierarchy.delete();
-    if (best) best.delete();
+    if (best) best.mat.delete();
+    if (bestFallback) bestFallback.mat.delete();
   }
 }
 
@@ -230,24 +257,88 @@ function findBestQuadrilateral(contours, frameArea) {
   for (let i = 0; i < contours.size(); i++) {
     const contour = contours.get(i);
     const perimeter = cv.arcLength(contour, true);
-    const approx = new cv.Mat();
-    cv.approxPolyDP(contour, approx, 0.025 * perimeter, true);
+    const area = Math.abs(cv.contourArea(contour));
 
-    const area = Math.abs(cv.contourArea(approx));
-    const isCandidate = approx.rows === 4 && area > frameArea * 0.08 && cv.isContourConvex(approx);
+    if (area > frameArea * 0.035) {
+      for (const epsilon of [0.012, 0.018, 0.026, 0.038, 0.055]) {
+        const approx = new cv.Mat();
+        cv.approxPolyDP(contour, approx, epsilon * perimeter, true);
 
-    if (isCandidate && area > bestScore) {
-      if (best) best.delete();
-      best = approx;
-      bestScore = area;
-    } else {
-      approx.delete();
+        const approxArea = Math.abs(cv.contourArea(approx));
+        const isCandidate = approx.rows === 4 && approxArea > frameArea * 0.035 && cv.isContourConvex(approx);
+        const score = approxArea - Math.abs(approxArea - area) * 0.08;
+
+        if (isCandidate && score > bestScore) {
+          if (best) best.delete();
+          best = approx;
+          bestScore = score;
+        } else {
+          approx.delete();
+        }
+      }
     }
 
     contour.delete();
   }
 
-  return best;
+  return best ? { mat: best, score: bestScore, kind: "quad" } : null;
+}
+
+function findBestBoundingRectangle(contours, frameArea) {
+  let best = null;
+  let bestScore = 0;
+
+  for (let i = 0; i < contours.size(); i++) {
+    const contour = contours.get(i);
+    const area = Math.abs(cv.contourArea(contour));
+
+    if (area > frameArea * 0.045) {
+      const rect = cv.boundingRect(contour);
+      const rectArea = rect.width * rect.height;
+      const fill = area / rectArea;
+      const score = rectArea * Math.min(fill, 0.85);
+      const isUsable = rect.width > 80 && rect.height > 80 && rectArea < frameArea * 0.98;
+
+      if (isUsable && score > bestScore) {
+        if (best) best.delete();
+        best = matFromRect(rect);
+        bestScore = score;
+      }
+    }
+
+    contour.delete();
+  }
+
+  return best ? { mat: best, score: bestScore * 0.72, kind: "fallback" } : null;
+}
+
+function makeCannyPass(source, low, high) {
+  const edges = new cv.Mat();
+  cv.Canny(source, edges, low, high);
+  const kernel = cv.Mat.ones(5, 5, cv.CV_8U);
+  cv.dilate(edges, edges, kernel);
+  cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, kernel);
+  kernel.delete();
+  return edges;
+}
+
+function makeThresholdPass(source) {
+  const threshold = new cv.Mat();
+  cv.adaptiveThreshold(source, threshold, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 8);
+  cv.bitwise_not(threshold, threshold);
+  const kernel = cv.Mat.ones(5, 5, cv.CV_8U);
+  cv.morphologyEx(threshold, threshold, cv.MORPH_CLOSE, kernel);
+  kernel.delete();
+  return threshold;
+}
+
+function matFromRect(rect) {
+  return cv.matFromArray(4, 1, cv.CV_32SC2, [
+    rect.x, rect.y,
+    rect.x + rect.width, rect.y,
+    rect.x + rect.width, rect.y + rect.height,
+    rect.x, rect.y + rect.height
+  ]);
 }
 
 function extractPoints(mat) {
