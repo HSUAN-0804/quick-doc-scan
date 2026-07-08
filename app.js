@@ -21,6 +21,8 @@ const els = {
   clearSelected: document.querySelector("#clearSelected"),
   libraryPane: document.querySelector("#libraryPane"),
   resizeGrip: document.querySelector("#resizeGrip"),
+  imageViewer: document.querySelector("#imageViewer"),
+  viewerImage: document.querySelector("#viewerImage"),
   modes: Array.from(document.querySelectorAll(".mode"))
 };
 
@@ -32,6 +34,7 @@ let scans = [];
 let previewDrag = null;
 let queueRunning = false;
 let queueTimer = null;
+let viewerUrl = "";
 
 window.onOpenCvLoaded = () => {
   if (window.cv && cv.Mat) {
@@ -88,7 +91,11 @@ function bindEvents() {
   bindIfPresent(els.downloadSelected, "click", downloadSelected);
   bindIfPresent(els.clearSelected, "click", deleteSelected);
   bindIfPresent(els.resizeGrip, "pointerdown", startPreviewResize);
+  bindIfPresent(els.imageViewer, "click", closeImageViewer);
   window.addEventListener("resize", () => syncLibraryExpanded());
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeImageViewer();
+  });
 
   for (const mode of els.modes) {
     mode.addEventListener("click", () => {
@@ -495,6 +502,8 @@ function renderScans() {
     if (previewBlob) {
       image.src = URL.createObjectURL(previewBlob);
       image.onload = () => URL.revokeObjectURL(image.src);
+      image.classList.add("can-expand");
+      image.addEventListener("click", () => openImageViewer(scan.id));
     }
 
     const pct = Math.round(scan.progress || 0);
@@ -506,6 +515,50 @@ function renderScans() {
     fragment.append(node);
   }
   els.strip.append(fragment);
+}
+
+function ensureImageViewer() {
+  if (els.imageViewer && els.viewerImage) return true;
+
+  const viewer = document.createElement("div");
+  viewer.className = "image-viewer";
+  viewer.id = "imageViewer";
+  viewer.hidden = true;
+
+  const image = document.createElement("img");
+  image.id = "viewerImage";
+  image.alt = "";
+  viewer.append(image);
+  document.body.append(viewer);
+
+  els.imageViewer = viewer;
+  els.viewerImage = image;
+  bindIfPresent(els.imageViewer, "click", closeImageViewer);
+  return true;
+}
+
+function openImageViewer(scanId) {
+  if (!ensureImageViewer()) return;
+
+  const scan = scans.find((item) => item.id === scanId);
+  const blob = scan && (scan.blob || scan.originalBlob);
+  if (!blob) return;
+
+  closeImageViewer();
+  viewerUrl = URL.createObjectURL(blob);
+  els.viewerImage.src = viewerUrl;
+  els.imageViewer.hidden = false;
+  document.body.classList.add("is-viewing-image");
+}
+
+function closeImageViewer() {
+  if (!els.imageViewer || els.imageViewer.hidden) return;
+
+  els.imageViewer.hidden = true;
+  if (els.viewerImage) els.viewerImage.removeAttribute("src");
+  if (viewerUrl) URL.revokeObjectURL(viewerUrl);
+  viewerUrl = "";
+  document.body.classList.remove("is-viewing-image");
 }
 
 function selectedScans() {

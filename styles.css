@@ -359,6 +359,10 @@ body.library-expanded .bottom-controls {
   background-position: 0 0, 0 9px, 9px -9px, -9px 0;
 }
 
+.scan-card img.can-expand {
+  cursor: zoom-in;
+}
+
 .scan-card.is-processing img {
   filter: saturate(0.82) brightness(0.72);
 }
@@ -468,6 +472,41 @@ body.library-expanded .bottom-controls {
   margin-top: 3px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding:
+    calc(env(safe-area-inset-top) + 12px)
+    12px
+    calc(env(safe-area-inset-bottom) + 12px);
+  background: rgba(0, 0, 0, 0.94);
+  cursor: zoom-out;
+  touch-action: none;
+}
+
+.image-viewer[hidden] {
+  display: none;
+}
+
+.image-viewer img {
+  width: 100%;
+  height: 100%;
+  max-width: 100vw;
+  max-height: 100dvh;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+body.is-viewing-image {
+  overflow: hidden;
 }
 
 @media (max-width: 390px) {
