@@ -10,6 +10,7 @@
   --accent-2: #52a7ff;
   --danger: #ff6b5f;
   --shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
+  --library-height: 36dvh;
 }
 
 * {
@@ -19,7 +20,9 @@
 html,
 body {
   margin: 0;
+  width: 100%;
   min-height: 100%;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -43,15 +46,16 @@ button:active,
 }
 
 .app-shell {
-  min-height: 100dvh;
-  display: grid;
-  grid-template-rows: minmax(72dvh, 1fr) auto;
-  padding: env(safe-area-inset-top) 0 0;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top);
 }
 
 .camera-pane {
   position: relative;
-  min-height: 72dvh;
+  flex: 1 1 auto;
+  min-height: 38dvh;
   overflow: hidden;
   background: #07090b;
 }
@@ -129,7 +133,7 @@ h2 {
 }
 
 .status-pill {
-  max-width: 142px;
+  max-width: 150px;
   padding: 7px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -218,11 +222,37 @@ h2 {
 }
 
 .library-pane {
-  max-height: 30dvh;
+  position: relative;
+  flex: 0 0 var(--library-height);
+  height: var(--library-height);
+  min-height: 18dvh;
+  max-height: 62dvh;
   overflow: auto;
-  padding: 12px 16px calc(env(safe-area-inset-bottom) + 112px);
+  padding: 18px 16px calc(env(safe-area-inset-bottom) + 142px);
   border-top: 1px solid var(--line);
   background: var(--panel);
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
+.resize-grip {
+  position: sticky;
+  z-index: 3;
+  top: 0;
+  display: grid;
+  place-items: center;
+  height: 22px;
+  margin: -12px -16px 4px;
+  background: linear-gradient(var(--panel), rgba(23, 29, 34, 0.86));
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.resize-grip span {
+  width: 54px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.32);
 }
 
 .library-head {
@@ -259,14 +289,14 @@ h2 {
 
 .strip {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
   gap: 10px;
   margin-top: 10px;
 }
 
 .empty-state {
   grid-column: 1 / -1;
-  min-height: 118px;
+  min-height: 140px;
   display: grid;
   place-items: center;
   border: 1px dashed var(--line);
@@ -279,7 +309,7 @@ h2 {
 .scan-card {
   position: relative;
   overflow: hidden;
-  min-height: 172px;
+  min-height: 188px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #0e1216;
@@ -312,8 +342,8 @@ h2 {
 }
 
 .check-wrap span {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   display: block;
   border: 2px solid rgba(255, 255, 255, 0.85);
   border-radius: 7px;
@@ -328,8 +358,8 @@ h2 {
 .check-wrap input:checked + span::after {
   content: "";
   display: block;
-  width: 10px;
-  height: 6px;
+  width: 11px;
+  height: 7px;
   margin: 7px 0 0 6px;
   border-left: 2px solid #08100d;
   border-bottom: 2px solid #08100d;
@@ -358,8 +388,24 @@ h2 {
   font-size: 12px;
 }
 
+@media (max-width: 390px) {
+  .strip {
+    grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  }
+
+  .capturebar {
+    gap: 12px;
+  }
+}
+
 @media (min-width: 820px) {
+  html,
+  body {
+    overflow: auto;
+  }
+
   .app-shell {
+    display: grid;
     grid-template-columns: minmax(480px, 1fr) 420px;
     grid-template-rows: 100dvh;
   }
@@ -369,10 +415,15 @@ h2 {
   }
 
   .library-pane {
-    overflow: auto;
-    padding-bottom: 20px;
+    height: 100dvh;
+    max-height: none;
+    padding-bottom: 142px;
     border-top: 0;
     border-left: 1px solid var(--line);
+  }
+
+  .resize-grip {
+    display: none;
   }
 
   .bottom-controls {
