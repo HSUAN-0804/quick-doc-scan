@@ -185,6 +185,7 @@ async function processQueuedScan(scan) {
     const points = await findCornersWithWorker(base64, sourceCanvas.width, sourceCanvas.height);
     await updateScan(scan.id, { progress: 82, note: "校正圖片" });
     const resultCanvas = cropWithPoints(sourceCanvas, points, scan.mode);
+    if (canvasLooksFlat(resultCanvas)) throw new Error("AI 結果像色塊，請重拍清楚一點");
     const blob = await canvasToBlob(resultCanvas, "image/jpeg", 0.92);
 
     await updateScan(scan.id, {
@@ -228,10 +229,36 @@ async function findCornersWithWorker(base64, width, height) {
 
 function normalizeWorkerPoints(points, width, height) {
   if (!Array.isArray(points) || points.length < 4) throw new Error("AI 沒有找到四角");
-  return orderCorners(points.slice(0, 4).map((point) => ({
+  const ordered = orderCorners(points.slice(0, 4).map((point) => ({
     x: clamp(Number(point.x), 0, width),
     y: clamp(Number(point.y), 0, height)
   })));
+  validateDocumentPoints(ordered, width, height);
+  return ordered;
+}
+
+function validateDocumentPoints(points, width, height) {
+  if (points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
+    throw new Error("AI 回傳座標異常");
+  }
+
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const boxWidth = Math.max(...xs) - Math.min(...xs);
+  const boxHeight = Math.max(...ys) - Math.min(...ys);
+  const minSide = Math.min(width, height);
+  const area = polygonArea(points);
+
+  if (boxWidth < minSide * 0.08 || boxHeight < minSide * 0.08 || area < width * height * 0.006) {
+    throw new Error("AI 邊框太小，請重拍清楚一點");
+  }
+}
+
+function polygonArea(points) {
+  return Math.abs(points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return sum + point.x * next.y - next.x * point.y;
+  }, 0) / 2);
 }
 
 function cropWithPoints(canvas, points, mode) {
@@ -257,6 +284,30 @@ function cropBoundingBox(canvas, points) {
   els.resultCanvas.height = height;
   els.resultCanvas.getContext("2d").drawImage(canvas, x, y, width, height, 0, 0, width, height);
   return cloneCanvas(els.resultCanvas);
+}
+
+function canvasLooksFlat(canvas) {
+  const sample = document.createElement("canvas");
+  const size = 24;
+  sample.width = size;
+  sample.height = size;
+  const ctx = sample.getContext("2d");
+  ctx.drawImage(canvas, 0, 0, size, size);
+  const data = ctx.getImageData(0, 0, size, size).data;
+  let total = 0;
+  let totalSq = 0;
+  let count = 0;
+
+  for (let index = 0; index < data.length; index += 4) {
+    const value = (data[index] + data[index + 1] + data[index + 2]) / 3;
+    total += value;
+    totalSq += value * value;
+    count += 1;
+  }
+
+  const mean = total / count;
+  const variance = totalSq / count - mean * mean;
+  return variance < 14;
 }
 
 function warpFromPoints(src, points, width, height) {
@@ -319,13 +370,20 @@ async function updateScan(id, patch) {
 
 function resetInterruptedJobs() {
   for (const scan of scans) {
-    if (scan.status === "processing") {
+    if (
+      scan.status === "processing" ||
+      (scan.status === "failed" && scan.originalBlob && isOldKeyError(scan.note))
+    ) {
       scan.status = "queued";
       scan.progress = Math.min(scan.progress || 0, 20);
       scan.note = "重新排隊";
       saveScan(scan);
     }
   }
+}
+
+function isOldKeyError(note) {
+  return /KEY|key|Gemini API key|尚未輸入|輸入/.test(String(note || ""));
 }
 
 function renderScans() {
@@ -356,8 +414,9 @@ function renderScans() {
     input.dataset.id = scan.id;
     input.disabled = status !== "done" || !scan.blob;
 
-    if (status === "done" && scan.blob) {
-      image.src = URL.createObjectURL(scan.blob);
+    const previewBlob = scan.blob || scan.originalBlob;
+    if (previewBlob) {
+      image.src = URL.createObjectURL(previewBlob);
       image.onload = () => URL.revokeObjectURL(image.src);
     }
 
