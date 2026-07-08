@@ -1,0 +1,370 @@
+:root {
+  color-scheme: dark;
+  --bg: #101418;
+  --panel: #171d22;
+  --panel-2: #20272d;
+  --line: rgba(255, 255, 255, 0.12);
+  --text: #f7f7f2;
+  --muted: #aeb8bd;
+  --accent: #21c88a;
+  --accent-2: #52a7ff;
+  --danger: #ff6b5f;
+  --shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+button:active,
+.file-button:active {
+  transform: translateY(1px);
+}
+
+.app-shell {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: minmax(420px, 1fr) auto;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+}
+
+.camera-pane {
+  position: relative;
+  min-height: 58dvh;
+  overflow: hidden;
+  background: #07090b;
+}
+
+#camera,
+#overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#camera {
+  object-fit: cover;
+}
+
+#overlay {
+  pointer-events: none;
+}
+
+.camera-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  text-align: center;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    #101418;
+  background-size: 34px 34px;
+  color: var(--muted);
+}
+
+.camera-empty strong {
+  color: var(--text);
+  font-size: 34px;
+}
+
+.camera-empty.is-hidden {
+  display: none;
+}
+
+.topbar {
+  position: absolute;
+  z-index: 2;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.eyebrow {
+  margin: 0 0 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+h1,
+h2 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+h1 {
+  font-size: 28px;
+}
+
+h2 {
+  font-size: 20px;
+}
+
+.status-pill {
+  max-width: 142px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(16, 20, 24, 0.72);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  backdrop-filter: blur(12px);
+}
+
+.status-pill.is-ready {
+  color: var(--accent);
+}
+
+.status-pill.is-busy {
+  color: var(--accent-2);
+}
+
+.modebar {
+  position: absolute;
+  z-index: 2;
+  left: 16px;
+  right: 16px;
+  bottom: 104px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.mode {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(16, 20, 24, 0.7);
+  color: var(--muted);
+  backdrop-filter: blur(12px);
+}
+
+.mode.is-active {
+  border-color: rgba(33, 200, 138, 0.75);
+  color: #08100d;
+  background: var(--accent);
+}
+
+.capturebar {
+  position: absolute;
+  z-index: 2;
+  left: 16px;
+  right: 16px;
+  bottom: 22px;
+  display: grid;
+  grid-template-columns: 72px 1fr 72px;
+  align-items: center;
+  gap: 18px;
+}
+
+.icon-button,
+.file-button {
+  min-height: 52px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(247, 247, 242, 0.12);
+  color: var(--text);
+  text-align: center;
+  backdrop-filter: blur(12px);
+}
+
+.file-button input {
+  display: none;
+}
+
+.shutter {
+  width: 74px;
+  height: 74px;
+  justify-self: center;
+  border: 6px solid rgba(255, 255, 255, 0.84);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: inset 0 0 0 5px rgba(16, 20, 24, 0.9), var(--shadow);
+}
+
+.library-pane {
+  padding: 18px 16px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.library-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.library-head button,
+.actions button {
+  min-height: 40px;
+  padding: 0 13px;
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+#shareSelected {
+  background: var(--accent);
+  color: #08100d;
+  font-weight: 700;
+}
+
+#clearSelected {
+  color: #ffd2cd;
+}
+
+.strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.empty-state {
+  grid-column: 1 / -1;
+  min-height: 118px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  text-align: center;
+  padding: 18px;
+}
+
+.scan-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 172px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0e1216;
+}
+
+.scan-card img {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  display: block;
+  object-fit: cover;
+  background:
+    linear-gradient(45deg, #232b31 25%, transparent 25%),
+    linear-gradient(-45deg, #232b31 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #232b31 75%),
+    linear-gradient(-45deg, transparent 75%, #232b31 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+
+.check-wrap {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  left: 8px;
+}
+
+.check-wrap input {
+  position: absolute;
+  opacity: 0;
+}
+
+.check-wrap span {
+  width: 26px;
+  height: 26px;
+  display: block;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.check-wrap input:checked + span {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.check-wrap input:checked + span::after {
+  content: "";
+  display: block;
+  width: 10px;
+  height: 6px;
+  margin: 7px 0 0 6px;
+  border-left: 2px solid #08100d;
+  border-bottom: 2px solid #08100d;
+  transform: rotate(-45deg);
+}
+
+.scan-meta {
+  padding: 9px;
+}
+
+.scan-meta strong,
+.scan-meta small {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scan-meta strong {
+  font-size: 13px;
+}
+
+.scan-meta small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (min-width: 820px) {
+  .app-shell {
+    grid-template-columns: minmax(480px, 1fr) 420px;
+    grid-template-rows: 100dvh;
+  }
+
+  .camera-pane {
+    min-height: 100dvh;
+  }
+
+  .library-pane {
+    overflow: auto;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+}
