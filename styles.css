@@ -315,10 +315,14 @@ h2 {
   background: #0e1216;
 }
 
-.scan-card img {
+.scan-card img,
+.progress-card {
   width: 100%;
   aspect-ratio: 3 / 4;
   display: block;
+}
+
+.scan-card img {
   object-fit: cover;
   background:
     linear-gradient(45deg, #232b31 25%, transparent 25%),
@@ -327,6 +331,47 @@ h2 {
     linear-gradient(-45deg, transparent 75%, #232b31 75%);
   background-size: 18px 18px;
   background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+
+.scan-card.is-processing img,
+.scan-card.is-failed img {
+  display: none;
+}
+
+.scan-card.is-done .progress-card {
+  display: none;
+}
+
+.progress-card {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  background: radial-gradient(circle at 50% 35%, #20282f, #0d1115 68%);
+  color: var(--muted);
+}
+
+.progress-ring {
+  --progress: 0;
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle closest-side, #11171c 72%, transparent 73%),
+    conic-gradient(var(--accent) calc(var(--progress) * 1%), rgba(255, 255, 255, 0.14) 0);
+}
+
+.progress-ring strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.scan-card.is-failed .progress-ring {
+  background:
+    radial-gradient(circle closest-side, #11171c 72%, transparent 73%),
+    conic-gradient(var(--danger) calc(var(--progress) * 1%), rgba(255, 255, 255, 0.14) 0);
 }
 
 .check-wrap {
@@ -348,6 +393,10 @@ h2 {
   border: 2px solid rgba(255, 255, 255, 0.85);
   border-radius: 7px;
   background: rgba(0, 0, 0, 0.38);
+}
+
+.check-wrap input:disabled + span {
+  opacity: 0.35;
 }
 
 .check-wrap input:checked + span {
