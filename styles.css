@@ -154,13 +154,14 @@ h2 {
 
 .bottom-controls {
   position: fixed;
-  z-index: 50;
+  z-index: 60;
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 0 16px calc(env(safe-area-inset-bottom) + 12px);
+  padding: 0 16px calc(env(safe-area-inset-bottom) + 14px);
   background: linear-gradient(transparent, rgba(16, 20, 24, 0.88) 30%, rgba(16, 20, 24, 0.96));
   pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease;
 }
 
 .modebar {
@@ -222,15 +223,20 @@ h2 {
 }
 
 .library-pane {
-  position: relative;
-  flex: 0 0 var(--library-height);
+  position: fixed;
+  z-index: 45;
+  left: 0;
+  right: 0;
+  bottom: 0;
   height: var(--library-height);
   min-height: 18dvh;
-  max-height: 62dvh;
+  max-height: 96dvh;
   overflow: auto;
-  padding: 18px 16px calc(env(safe-area-inset-bottom) + 142px);
+  padding: 0 16px calc(env(safe-area-inset-bottom) + 142px);
   border-top: 1px solid var(--line);
+  border-radius: 18px 18px 0 0;
   background: var(--panel);
+  box-shadow: 0 -18px 46px rgba(0, 0, 0, 0.36);
   overscroll-behavior: contain;
   touch-action: pan-y;
 }
@@ -241,9 +247,11 @@ h2 {
   top: 0;
   display: grid;
   place-items: center;
-  height: 22px;
-  margin: -12px -16px 4px;
-  background: linear-gradient(var(--panel), rgba(23, 29, 34, 0.86));
+  height: 34px;
+  margin: 0 -16px 8px;
+  border-radius: 18px 18px 0 0;
+  background: var(--panel);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   cursor: ns-resize;
   touch-action: none;
 }
@@ -260,6 +268,17 @@ h2 {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  padding-top: 2px;
+}
+
+body.library-expanded .library-pane {
+  z-index: 80;
+}
+
+body.library-expanded .bottom-controls {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(18px);
 }
 
 .library-head button,
@@ -464,11 +483,18 @@ h2 {
   }
 
   .library-pane {
+    position: relative;
+    z-index: auto;
+    left: auto;
+    right: auto;
+    bottom: auto;
     height: 100dvh;
     max-height: none;
     padding-bottom: 142px;
     border-top: 0;
+    border-radius: 0;
     border-left: 1px solid var(--line);
+    box-shadow: none;
   }
 
   .resize-grip {
