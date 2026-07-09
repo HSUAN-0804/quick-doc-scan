@@ -1,7 +1,7 @@
 {
   "name": "快掃文件",
   "short_name": "快掃",
-  "start_url": "./index.html?v=27",
+  "start_url": "./index.html?v=28",
   "display": "standalone",
   "background_color": "#101418",
   "theme_color": "#101418",
