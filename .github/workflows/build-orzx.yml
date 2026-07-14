@@ -1,0 +1,36 @@
+name: Build ORZX
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-orzx:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout temporary branch
+        uses: actions/checkout@v4
+
+      - name: Checkout SeaCAD SDK sample
+        uses: actions/checkout@v4
+        with:
+          repository: mikhailSokolovskiy/laserTestSDK
+          path: sdk
+
+      - name: Decode Shiba image
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("shiba.png", [Convert]::FromBase64String((Get-Content "tools/orzx/shiba.png.b64" -Raw)))
+
+      - name: Create ORZX project with MarkSDK
+        shell: pwsh
+        run: |
+          ./tools/orzx/build-orzx.ps1
+
+      - name: Upload ORZX
+        uses: actions/upload-artifact@v4
+        with:
+          name: shiba-orzx
+          path: output/柴犬_圓形40mm.orzx
+          if-no-files-found: error
